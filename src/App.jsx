@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
 import { parseExpenseText, suggestCategory } from "./parser.js";
@@ -22,6 +23,8 @@ const navItems = [
   { id: "report", label: "月报", icon: ChartIcon },
   { id: "profile", label: "我的", icon: UserIcon }
 ];
+
+const XzbOcr = registerPlugin("XzbOcr");
 
 const emptyDraft = () => ({
   amount: "",
@@ -345,6 +348,38 @@ function ScanScreen({ onPending }) {
   const [imageNotice, setImageNotice] = useState("");
   const [notificationNotice, setNotificationNotice] = useState("");
 
+  async function pickImageWithNativeOcr() {
+    setCandidate(null);
+    setRawText("");
+    setPreview("");
+    setImageNotice("");
+
+    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
+      setStatus("需要安卓安装包");
+      setImageNotice("请在手机安装包里使用系统选图识别；网页预览只能手动粘贴文字识别。");
+      return;
+    }
+
+    setStatus("正在打开相册");
+    try {
+      const result = await XzbOcr.pickImageAndRecognize();
+      const text = String(result?.text || "").trim();
+      setRawText(text);
+
+      if (!text) {
+        setStatus("未识别到文字");
+        setImageNotice("这张图没有读到文字，请换一张更清晰的支付成功截图或账单截图。");
+        return;
+      }
+
+      setStatus("已读取文字");
+      recognizeFromText(text, "截图识别");
+    } catch (error) {
+      setStatus("等待截图");
+      setImageNotice(error?.message || "没有选择图片。");
+    }
+  }
+
   async function handleImage(file) {
     if (!file) return;
     setPreview(await readFileAsDataUrl(file));
@@ -368,7 +403,7 @@ function ScanScreen({ onPending }) {
       }
     } else {
       setStatus("已导入，等待文字");
-      setImageNotice("当前版本会先预览截图；自动 OCR 需要接入手机本机识别。请把账单文字粘贴到文本框后再识别。");
+      setImageNotice("网页备用导入只能预览截图；手机安装包请用上方系统选图识别。");
     }
   }
 
@@ -415,6 +450,10 @@ function ScanScreen({ onPending }) {
       </header>
 
       <div className="import-panel">
+        <button className="primary-button full" type="button" onClick={pickImageWithNativeOcr}>
+          <ScanIcon />
+          选择截图并识别
+        </button>
         <label className="upload-box">
           <input type="file" accept="image/*" onChange={(event) => handleImage(event.target.files?.[0])} />
           {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
