@@ -41,15 +41,20 @@ function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [draft, setDraft] = useState(emptyDraft);
   const [editingId, setEditingId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
   const currentMonth = today().slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const monthlyExpenses = useMemo(
-    () => expenses.filter((expense) => expense.date?.startsWith(currentMonth)),
-    [expenses, currentMonth]
+    () => expenses.filter((expense) => expense.date?.startsWith(selectedMonth)),
+    [expenses, selectedMonth]
   );
-  const stats = useMemo(() => getMonthStats(monthlyExpenses, settings.budget), [monthlyExpenses, settings.budget]);
+  const stats = useMemo(
+    () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth),
+    [monthlyExpenses, settings.budget, selectedMonth]
+  );
 
   useEffect(() => {
     saveState(appState);
@@ -106,8 +111,14 @@ function App() {
     setActiveTab("add");
   }
 
-  function deleteExpense(id) {
-    setExpenses((items) => items.filter((item) => item.id !== id));
+  function requestDeleteExpense(expense) {
+    setDeleteTarget(expense);
+  }
+
+  function confirmDeleteExpense() {
+    if (!deleteTarget) return;
+    setExpenses((items) => items.filter((item) => item.id !== deleteTarget.id));
+    setDeleteTarget(null);
   }
 
   function addPending(entry) {
@@ -121,14 +132,17 @@ function App() {
         {activeTab === "home" && (
           <HomeScreen
             stats={stats}
-            expenses={expenses}
+            expenses={monthlyExpenses}
             pending={pending}
             settings={settings}
+            selectedMonth={selectedMonth}
+            currentMonth={currentMonth}
+            onMonthChange={setSelectedMonth}
             onTab={setActiveTab}
             onConfirm={confirmPending}
             onDeletePending={(id) => setPending((items) => items.filter((item) => item.id !== id))}
             onEdit={editExpense}
-            onDelete={deleteExpense}
+            onDelete={requestDeleteExpense}
           />
         )}
         {activeTab === "add" && (
@@ -139,7 +153,18 @@ function App() {
           }} />
         )}
         {activeTab === "scan" && <ScanScreen onPending={addPending} />}
-        {activeTab === "report" && <ReportScreen stats={stats} expenses={monthlyExpenses} budget={settings.budget} />}
+        {activeTab === "report" && (
+          <ReportScreen
+            stats={stats}
+            expenses={monthlyExpenses}
+            budget={settings.budget}
+            selectedMonth={selectedMonth}
+            currentMonth={currentMonth}
+            onMonthChange={setSelectedMonth}
+            onEdit={editExpense}
+            onDelete={requestDeleteExpense}
+          />
+        )}
         {activeTab === "profile" && (
           <ProfileScreen
             settings={settings}
@@ -149,15 +174,36 @@ function App() {
             setPending={setPending}
           />
         )}
+        {deleteTarget && (
+          <ConfirmDeleteModal
+            item={deleteTarget}
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={confirmDeleteExpense}
+          />
+        )}
         <BottomNav activeTab={activeTab} onTab={setActiveTab} />
       </main>
     </div>
   );
 }
 
-function HomeScreen({ stats, expenses, pending, settings, onTab, onConfirm, onDeletePending, onEdit, onDelete }) {
+function HomeScreen({
+  stats,
+  expenses,
+  pending,
+  settings,
+  selectedMonth,
+  currentMonth,
+  onMonthChange,
+  onTab,
+  onConfirm,
+  onDeletePending,
+  onEdit,
+  onDelete
+}) {
   const latest = expenses.slice(0, 6);
   const coverStyle = getCoverStyle(settings);
+  const isCurrentMonth = selectedMonth === currentMonth;
 
   return (
     <Screen className="home-screen">
@@ -176,12 +222,12 @@ function HomeScreen({ stats, expenses, pending, settings, onTab, onConfirm, onDe
           <div className="cover-image-area" />
           <div className="cover-data-area">
             <div className="cover-stat-main">
-              <span>本月支出</span>
+              <span>{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
               <strong>{money(stats.total)}</strong>
             </div>
             <div className="today-chip">
-              <span>今日</span>
-              <b>{money(stats.todayTotal)}</b>
+              <span>{isCurrentMonth ? "今日" : "日均"}</span>
+              <b>{money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}</b>
             </div>
             <div className="budget-block">
               <div className="budget-row">
@@ -204,6 +250,8 @@ function HomeScreen({ stats, expenses, pending, settings, onTab, onConfirm, onDe
           <ActionButton icon={BellIcon} label="通知识别" onClick={() => onTab("scan")} />
         </div>
 
+        <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
+
         <SectionTitle title="待确认" aside={`${pending.length} 条`} />
         <div className="stack">
           {pending.length === 0 && <EmptyLine text="没有待确认账单" />}
@@ -212,7 +260,7 @@ function HomeScreen({ stats, expenses, pending, settings, onTab, onConfirm, onDe
           ))}
         </div>
 
-        <SectionTitle title="最近记录" aside="本地保存" />
+        <SectionTitle title="最近记录" aside={formatMonthLabel(selectedMonth)} />
         <ExpenseList items={latest} onEdit={onEdit} onDelete={onDelete} />
       </section>
     </Screen>
@@ -294,13 +342,16 @@ function ScanScreen({ onPending }) {
   const [candidate, setCandidate] = useState(null);
   const [preview, setPreview] = useState("");
   const [status, setStatus] = useState("等待截图");
-  const [notice, setNotice] = useState("");
+  const [imageNotice, setImageNotice] = useState("");
+  const [notificationNotice, setNotificationNotice] = useState("");
 
   async function handleImage(file) {
     if (!file) return;
     setPreview(await readFileAsDataUrl(file));
-    setStatus("图片已导入");
-    setNotice("");
+    setRawText("");
+    setCandidate(null);
+    setStatus("正在读取文字");
+    setImageNotice("");
 
     if ("TextDetector" in window) {
       try {
@@ -310,31 +361,38 @@ function ScanScreen({ onPending }) {
         const text = detections.map((item) => item.rawValue).join("\n");
         setRawText(text);
         setStatus(text ? "已读取文字" : "等待文字");
+        if (!text) setImageNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
       } catch {
         setStatus("等待文字");
-        setNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
+        setImageNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
       }
     } else {
       setStatus("已导入，等待文字");
-      setNotice("当前浏览器不支持自动 OCR，请把账单文字粘贴到文本框后再识别。APK 版会接入手机本机 OCR。");
+      setImageNotice("当前版本会先预览截图；自动 OCR 需要接入手机本机识别。请把账单文字粘贴到文本框后再识别。");
     }
   }
 
   function recognizeFromText(text, source) {
     const normalizedText = String(text || "").trim();
+    const setSourceNotice = source === "截图识别" ? setImageNotice : setNotificationNotice;
     if (!normalizedText) {
       const message = source === "截图识别"
         ? "没有可识别的文字，请先粘贴账单文字。"
         : "请先粘贴微信或支付宝通知文本。";
       if (source === "截图识别") setStatus("缺少识别文本");
-      setNotice(message);
+      setSourceNotice(message);
       setCandidate(null);
       return;
     }
 
     const parsed = parseExpenseText(normalizedText);
-    setCandidate({ ...parsed, source });
-    setNotice("已生成候选账单，请确认后入账。");
+    const nextCandidate = { ...parsed, source };
+    setCandidate(nextCandidate);
+    setSourceNotice(
+      !nextCandidate.amount || nextCandidate.merchant === "未识别商户"
+        ? "识别结果不完整，请检查金额和商户后再确认。"
+        : "已生成候选账单，请确认后入账。"
+    );
     if (source === "截图识别") setStatus("已生成候选账单");
   }
 
@@ -345,7 +403,8 @@ function ScanScreen({ onPending }) {
     setRawText("");
     setNotificationText("");
     setStatus("等待截图");
-    setNotice("已加入待确认账单。");
+    setImageNotice("");
+    setNotificationNotice("");
   }
 
   return (
@@ -364,13 +423,16 @@ function ScanScreen({ onPending }) {
         <textarea
           value={rawText}
           onChange={(event) => setRawText(event.target.value)}
-          placeholder="识别文本"
+          placeholder="粘贴截图中的账单文字，例如：支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32"
         />
+        <div className="sample-row">
+          <button type="button" onClick={() => setRawText("支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32")}>截图样例</button>
+        </div>
         <button className="primary-button full" type="button" onClick={() => recognizeFromText(rawText, "截图识别")}>
           <ScanIcon />
           开始识别
         </button>
-        {notice && <p className="scan-feedback">{notice}</p>}
+        {imageNotice && <p className="scan-feedback">{imageNotice}</p>}
       </div>
 
       {candidate?.source === "截图识别" && (
@@ -397,6 +459,7 @@ function ScanScreen({ onPending }) {
           <BellIcon />
           识别通知
         </button>
+        {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
       </div>
 
       {candidate?.source === "通知识别" && (
@@ -446,13 +509,15 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
   );
 }
 
-function ReportScreen({ stats, expenses, budget }) {
+function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, onMonthChange, onEdit, onDelete }) {
   return (
     <Screen>
       <header className="screen-heading report-heading">
         <p>月度报告</p>
-        <h2>{today().slice(0, 7).replace("-", " 年 ")} 月</h2>
+        <h2>{formatMonthLabel(selectedMonth)}</h2>
       </header>
+
+      <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
 
       <section className="report-summary">
         <div>
@@ -498,6 +563,9 @@ function ReportScreen({ stats, expenses, budget }) {
         <Insight text={stats.maxExpense ? `最大单笔是 ${stats.maxExpense.merchant}` : "开始记第一笔后生成洞察"} />
         <Insight text={stats.usedRate > 85 ? "预算使用偏快" : "预算节奏稳定"} />
       </div>
+
+      <SectionTitle title="月度账单" aside={`${expenses.length} 笔`} />
+      <ExpenseList items={expenses} onEdit={onEdit} onDelete={onDelete} />
     </Screen>
   );
 }
@@ -735,7 +803,7 @@ function ExpenseList({ items, onEdit, onDelete }) {
             <button type="button" className="row-icon" aria-label="编辑" onClick={() => onEdit(item)}>
               <EditIcon />
             </button>
-            <button type="button" className="row-icon" aria-label="删除" onClick={() => onDelete(item.id)}>
+            <button type="button" className="row-icon" aria-label="删除" onClick={() => onDelete(item)}>
               <TrashIcon />
             </button>
           </article>
@@ -766,6 +834,24 @@ function BottomNav({ activeTab, onTab }) {
   );
 }
 
+function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
+  return (
+    <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认删除">
+      <section className="confirm-modal">
+        <div>
+          <span>删除记录</span>
+          <h3>确定删除这一笔吗？</h3>
+          <p>{item.merchant} · {money(item.amount)}</p>
+        </div>
+        <div className="confirm-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="danger-button" type="button" onClick={onConfirm}>删除</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function Screen({ children, className = "" }) {
   return <div className={`screen ${className}`.trim()}>{children}</div>;
 }
@@ -785,6 +871,23 @@ function ActionButton({ icon: Icon, label, onClick }) {
       <Icon />
       <span>{label}</span>
     </button>
+  );
+}
+
+function MonthPicker({ value, max, onChange }) {
+  return (
+    <div className="month-picker">
+      <button type="button" onClick={() => onChange(shiftMonth(value, -1))} aria-label="上个月">
+        ‹
+      </button>
+      <label>
+        <span>账单月份</span>
+        <input type="month" value={value} max={max} onChange={(event) => onChange(event.target.value || max)} />
+      </label>
+      <button type="button" onClick={() => onChange(shiftMonth(value, 1))} disabled={value >= max} aria-label="下个月">
+        ›
+      </button>
+    </div>
   );
 }
 
@@ -869,11 +972,12 @@ function EmptyLine({ text }) {
   return <p className="empty-line">{text}</p>;
 }
 
-function getMonthStats(expenses, budget) {
+function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
   const total = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const todayTotal = expenses
-    .filter((item) => item.date === today())
-    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const currentMonth = today().slice(0, 7);
+  const todayTotal = month === currentMonth
+    ? expenses.filter((item) => item.date === today()).reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    : 0;
   const categoryTotals = categories
     .map((category) => {
       const categoryTotal = expenses
@@ -888,10 +992,12 @@ function getMonthStats(expenses, budget) {
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
 
+  const [year, monthNumber] = month.split("-").map(Number);
   const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const days = Array.from({ length: Math.min(now.getDate(), daysInMonth) }, (_, index) => {
-    const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(index + 1)}`;
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const visibleDays = month === currentMonth ? Math.min(now.getDate(), daysInMonth) : daysInMonth;
+  const days = Array.from({ length: visibleDays }, (_, index) => {
+    const date = `${year}-${pad(monthNumber)}-${pad(index + 1)}`;
     return {
       date,
       total: expenses.filter((item) => item.date === date).reduce((sum, item) => sum + Number(item.amount || 0), 0)
@@ -968,6 +1074,17 @@ function getCoverStyle(settings) {
 function formatReadableDate(value) {
   const date = new Date(`${value}T00:00:00`);
   return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+function formatMonthLabel(value) {
+  const [year, month] = String(value || today().slice(0, 7)).split("-");
+  return `${year} 年 ${Number(month)} 月`;
+}
+
+function shiftMonth(value, offset) {
+  const [year, month] = String(value || today().slice(0, 7)).split("-").map(Number);
+  const date = new Date(year, month - 1 + offset, 1);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
 }
 
 function money(value) {

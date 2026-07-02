@@ -1,7 +1,9 @@
 import { categories } from "./data.js";
 
 const amountRegexes = [
+  /(?:￥|¥)\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
   /(?:￥|¥|RMB|人民币|金额|付款|支付|消费|支出)\s*[:：]?\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
+  /(?:实付|实付款|已付款|付款金额|支付金额|交易金额)\s*[:：]?\s*(?:￥|¥)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
   /([0-9]+(?:\.[0-9]{1,2})?)\s*(?:元|CNY)/i
 ];
 
@@ -89,8 +91,9 @@ function extractDateTime(text) {
 
 function extractMerchant(text, lines) {
   const patterns = [
-    /(?:收款方|商户|商家|对方|付款给|支付给)\s*[:：]?\s*([^￥¥\d，,。]+)/,
-    /向\s*([^￥¥\d，,。]+?)\s*(?:付款|支付)/
+    /(?:收款方|商户名称|商户|商家|交易对象|对方账户|对方|付款给|支付给|转账给)\s*[:：]?\s*([^￥¥\d，,。\n]+)/,
+    /向\s*([^￥¥\d，,。\n]+?)\s*(?:付款|支付|转账)/,
+    /(?:微信支付|支付宝)\s*[-—]?\s*([^￥¥\d，,。\n]+?)\s*(?:付款|支付|消费|交易)?(?:成功|￥|¥|$)/
   ];
 
   for (const pattern of patterns) {
@@ -99,7 +102,7 @@ function extractMerchant(text, lines) {
   }
 
   const usefulLine = lines.find((line) => {
-    if (/付款成功|支付成功|交易成功|微信|支付宝|￥|¥|金额|订单|时间|账单/.test(line)) return false;
+    if (/付款成功|支付成功|交易成功|微信|支付宝|￥|¥|金额|订单|单号|时间|账单|银行卡|余额/.test(line)) return false;
     return line.length >= 2 && line.length <= 18;
   });
 
@@ -108,7 +111,7 @@ function extractMerchant(text, lines) {
 
 function cleanMerchant(value) {
   return String(value || "")
-    .replace(/(付款|支付|成功|消费|收款|账单|截图|OCR)/g, "")
+    .replace(/(付款|支付|成功|消费|收款|账单|截图|OCR|微信支付|支付宝|商户名称|商户|交易对象)/g, "")
     .replace(/[：:，,。]/g, "")
     .trim()
     .slice(0, 18) || "未识别商户";

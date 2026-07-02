@@ -2,7 +2,7 @@ export const categories = [
   { id: "food", name: "餐饮", color: "#ee775d", keywords: ["咖啡", "餐", "饭", "茶", "奶茶", "外卖", "食", "面", "星巴克", "瑞幸"] },
   { id: "transport", name: "交通", color: "#5f9fcf", keywords: ["地铁", "公交", "打车", "滴滴", "高铁", "机票", "停车", "加油"] },
   { id: "shopping", name: "购物", color: "#d6a94f", keywords: ["淘宝", "京东", "商场", "优衣库", "超市", "盒马", "便利店"] },
-  { id: "home", name: "居家", color: "#8a7cc4", keywords: ["水费", "电费", "物业", "房租", "燃气", "家居"] },
+  { id: "home", name: "用水", color: "#4d9fc5", keywords: ["水费", "自来水", "饮用水", "桶装水", "矿泉水", "水站"] },
   { id: "fun", name: "娱乐", color: "#63a889", keywords: ["电影", "游戏", "会员", "演出", "酒吧", "KTV"] },
   { id: "health", name: "医疗", color: "#d86d84", keywords: ["医院", "药", "体检", "诊所", "医保"] },
   { id: "study", name: "学习", color: "#4f77b8", keywords: ["书", "课程", "培训", "文具", "知识"] },

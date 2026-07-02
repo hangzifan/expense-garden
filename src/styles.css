@@ -281,6 +281,48 @@ body[data-theme="dark"] .cover-data-area {
   margin-bottom: 18px;
 }
 
+.month-picker {
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.month-picker button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.month-picker button:disabled {
+  opacity: 0.38;
+}
+
+.month-picker label {
+  display: grid;
+  gap: 5px;
+}
+
+.month-picker span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.month-picker input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
 .action-button {
   min-height: 78px;
   border: 1px solid var(--line);
@@ -346,7 +388,8 @@ body[data-theme="dark"] .cover-data-area {
 }
 
 .primary-button,
-.secondary-button {
+.secondary-button,
+.danger-button {
   border: 0;
   border-radius: var(--radius);
   min-height: 44px;
@@ -372,6 +415,11 @@ body[data-theme="dark"] .cover-data-area {
   background: var(--surface-soft);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+.danger-button {
+  background: #c85252;
+  color: white;
 }
 
 .full {
@@ -811,6 +859,46 @@ body[data-theme="dark"] .cover-data-area {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 14px;
+}
+
+.confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 34;
+  display: grid;
+  place-items: end center;
+  padding: 18px 18px 104px;
+  background: rgba(20, 28, 25, 0.36);
+  backdrop-filter: blur(8px);
+}
+
+.confirm-modal {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 20px 52px rgba(18, 26, 23, 0.28);
+  padding: 16px;
+}
+
+.confirm-modal span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.confirm-modal p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .preset-grid {

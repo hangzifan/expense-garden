@@ -5,11 +5,15 @@ const STORE_KEY = "expense-garden-state-v1";
 export function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return normalizeState(JSON.parse(raw));
   } catch {
     // Ignore damaged local state and fall back to a fresh book.
   }
 
+  return createDefaultState();
+}
+
+function createDefaultState() {
   return {
     expenses: seedExpenses,
     pending: seedPending,
@@ -19,6 +23,18 @@ export function loadState() {
       coverPresetId: coverPresets[0].id,
       coverImage: "",
       darkMode: false
+    }
+  };
+}
+
+function normalizeState(state) {
+  const defaults = createDefaultState();
+  return {
+    expenses: Array.isArray(state?.expenses) ? state.expenses : defaults.expenses,
+    pending: Array.isArray(state?.pending) ? state.pending : defaults.pending,
+    settings: {
+      ...defaults.settings,
+      ...(state?.settings || {})
     }
   };
 }
