@@ -1,5 +1,5 @@
 export const categories = [
-  { id: "food", name: "餐饮", color: "#ee775d", keywords: ["咖啡", "餐", "饭", "茶", "奶茶", "外卖", "食", "面", "星巴克", "瑞幸"] },
+  { id: "food", name: "餐饮", color: "#ee775d", keywords: ["咖啡", "餐", "饭", "茶", "奶茶", "外卖", "食", "面", "星巴克", "瑞幸", "茶百道", "蜜雪", "喜茶", "霸王茶姬"] },
   { id: "transport", name: "交通", color: "#5f9fcf", keywords: ["地铁", "公交", "打车", "滴滴", "高铁", "机票", "停车", "加油"] },
   { id: "shopping", name: "购物", color: "#d6a94f", keywords: ["淘宝", "京东", "商场", "优衣库", "超市", "盒马", "便利店"] },
   { id: "home", name: "用水", color: "#4d9fc5", keywords: ["水费", "自来水", "饮用水", "桶装水", "矿泉水", "水站"] },

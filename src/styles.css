@@ -369,6 +369,7 @@ body[data-theme="dark"] .cover-data-area {
 
 .pending-card,
 .candidate-card,
+.notification-sync-card,
 .import-panel,
 .chart-panel,
 .settings-panel,
@@ -382,6 +383,7 @@ body[data-theme="dark"] .cover-data-area {
 
 .pending-card,
 .candidate-card,
+.notification-sync-card,
 .import-panel,
 .chart-panel,
 .settings-panel {
@@ -418,6 +420,11 @@ body[data-theme="dark"] .cover-data-area {
 .primary-button {
   background: var(--primary);
   color: white;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.58;
 }
 
 .primary-button.small {
@@ -504,6 +511,15 @@ body[data-theme="dark"] .cover-data-area {
   white-space: nowrap;
 }
 
+.duplicate-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--accent);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .row-icon {
   width: 34px;
   height: 34px;
@@ -515,6 +531,38 @@ body[data-theme="dark"] .cover-data-area {
 .settings-panel {
   display: grid;
   gap: 14px;
+}
+
+.notification-sync-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.notification-sync-card span,
+.batch-candidate-title span,
+.batch-image-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-sync-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 20px;
+}
+
+.notification-sync-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.notification-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .field {
@@ -687,6 +735,32 @@ body[data-theme="dark"] .cover-data-area {
   font-size: 12px;
 }
 
+.batch-image-list {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-image-item,
+.batch-candidate-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.batch-image-item {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.batch-image-item b,
+.batch-candidate-title b {
+  color: var(--primary);
+  font-size: 12px;
+}
+
 .candidate-card {
   margin-top: 14px;
   box-shadow: var(--shadow);
@@ -709,6 +783,58 @@ body[data-theme="dark"] .cover-data-area {
   place-items: center;
   background: color-mix(in srgb, var(--primary) 16%, var(--surface));
   color: var(--primary);
+}
+
+.batch-candidate-card {
+  display: grid;
+  gap: 14px;
+}
+
+.batch-candidate-list {
+  display: grid;
+  gap: 12px;
+}
+
+.batch-candidate-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.batch-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.batch-fields label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.batch-fields label:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.batch-fields span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batch-fields input,
+.batch-fields select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
 }
 
 .report-summary {

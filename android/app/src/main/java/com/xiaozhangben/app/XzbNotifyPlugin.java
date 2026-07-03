@@ -1,15 +1,14 @@
 package com.xiaozhangben.app;
 
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.provider.Settings;
 import androidx.core.app.NotificationManagerCompat;
-import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.IOException;
 import org.json.JSONException;
 
 @CapacitorPlugin(name = "XzbNotify")
@@ -34,16 +33,11 @@ public class XzbNotifyPlugin extends Plugin {
 
     @PluginMethod
     public void drainNotifications(PluginCall call) {
-        SharedPreferences prefs = getContext().getSharedPreferences(XzbNotificationStore.PREFS, android.content.Context.MODE_PRIVATE);
-        String raw = prefs.getString(XzbNotificationStore.KEY_ITEMS, "[]");
-
         try {
             JSObject ret = new JSObject();
-            ret.put("items", new JSArray(raw));
-            prefs.edit().putString(XzbNotificationStore.KEY_ITEMS, "[]").apply();
+            ret.put("items", XzbNotificationStore.drain(getContext()));
             call.resolve(ret);
-        } catch (JSONException error) {
-            prefs.edit().putString(XzbNotificationStore.KEY_ITEMS, "[]").apply();
+        } catch (IOException | JSONException error) {
             call.reject("读取通知账单失败", error);
         }
     }

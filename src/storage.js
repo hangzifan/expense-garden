@@ -1,16 +1,42 @@
 import { coverPresets, themes } from "./data.js";
 
 const STORE_KEY = "expense-garden-state-v1";
+const STORE_BACKUP_KEY = `${STORE_KEY}.backup`;
+const STORE_PREVIOUS_KEY = `${STORE_KEY}.previous`;
+const STORE_CORRUPT_PREFIX = `${STORE_KEY}.corrupt`;
 
 export function loadState() {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return normalizeState(JSON.parse(raw));
-  } catch {
-    // Ignore damaged local state and fall back to a fresh book.
-  }
+  const primary = readStoredState(STORE_KEY);
+  if (primary.ok) return primary.state;
+  if (primary.raw) preserveCorruptState(primary.raw);
+
+  const backup = readStoredState(STORE_BACKUP_KEY);
+  if (backup.ok) return backup.state;
+
+  const previous = readStoredState(STORE_PREVIOUS_KEY);
+  if (previous.ok) return previous.state;
 
   return createDefaultState();
+}
+
+function readStoredState(key) {
+  const raw = localStorage.getItem(key);
+  if (!raw) return { ok: false, raw: "" };
+
+  try {
+    return { ok: true, state: normalizeState(JSON.parse(raw)), raw };
+  } catch {
+    return { ok: false, raw };
+  }
+}
+
+function preserveCorruptState(raw) {
+  try {
+    const key = `${STORE_CORRUPT_PREFIX}.${Date.now()}`;
+    localStorage.setItem(key, raw);
+  } catch {
+    // If storage is full or unavailable, keep the app usable.
+  }
 }
 
 function createDefaultState() {
@@ -49,7 +75,11 @@ function normalizeEntry(entry) {
 }
 
 export function saveState(state) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  const serialized = JSON.stringify(state);
+  const current = localStorage.getItem(STORE_KEY);
+  if (current) localStorage.setItem(STORE_PREVIOUS_KEY, current);
+  localStorage.setItem(STORE_BACKUP_KEY, serialized);
+  localStorage.setItem(STORE_KEY, serialized);
 }
 
 export function downloadJson(filename, data) {

@@ -3,6 +3,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
 import { parseExpenseText } from "./parser.js";
+import { createId } from "./ids.js";
 import {
   ChartIcon,
   CheckIcon,
@@ -24,6 +25,7 @@ const navItems = [
 ];
 
 const XzbOcr = registerPlugin("XzbOcr");
+const XzbNotify = registerPlugin("XzbNotify");
 const recordTypeLabels = { expense: "支出", income: "收入" };
 
 const emptyDraft = () => ({
@@ -37,6 +39,81 @@ const emptyDraft = () => ({
   note: ""
 });
 
+function normalizeNotificationItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .map((item, index) => {
+      const rawText = String(item?.rawText || "").trim();
+      if (!rawText) return null;
+      const parsed = parseExpenseText(rawText);
+      const method = item?.packageName === "com.eg.android.AlipayGphone"
+        ? "支付宝"
+        : item?.packageName === "com.tencent.mm"
+          ? "微信"
+          : parsed.method;
+
+      return {
+        ...parsed,
+        id: item?.id ? `notice-${item.id}` : createId(`notice-${index}`),
+        method,
+        source: "通知识别",
+        rawText,
+        note: "来自系统通知"
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizePendingEntry(entry, index = 0) {
+  if (!entry) return null;
+  const type = entry.type === "income" ? "income" : "expense";
+  return {
+    ...entry,
+    id: entry.id || createId(`pending-${index}`),
+    type,
+    amount: Number(entry.amount || 0),
+    merchant: entry.merchant || "未识别商户",
+    category: entry.category || (type === "income" ? "income-other" : "other"),
+    method: entry.method || "其他",
+    date: entry.date || today(),
+    time: entry.time || currentTime(),
+    note: entry.note || ""
+  };
+}
+
+function mergePendingEntries(current, incoming) {
+  const seenIds = new Set(current.map((item) => item.id));
+  const seenFingerprints = new Set(current.map(pendingFingerprint));
+  const nextIncoming = [];
+
+  for (const entry of incoming) {
+    const normalizedEntry = seenIds.has(entry.id) ? { ...entry, id: createId("pending") } : entry;
+    seenIds.add(normalizedEntry.id);
+    const fingerprint = pendingFingerprint(entry);
+    const duplicateHint = seenFingerprints.has(fingerprint);
+    seenFingerprints.add(fingerprint);
+    nextIncoming.push({
+      ...normalizedEntry,
+      duplicateHint,
+      note: duplicateHint && !normalizedEntry.note ? "可能重复，请核对" : normalizedEntry.note
+    });
+  }
+
+  return [...nextIncoming, ...current];
+}
+
+function pendingFingerprint(entry) {
+  const amount = Number(entry?.amount || 0).toFixed(2);
+  return [
+    entry?.type || "expense",
+    amount,
+    String(entry?.merchant || "").trim(),
+    entry?.date || "",
+    entry?.time || "",
+    entry?.method || "",
+    entry?.source || ""
+  ].join("|");
+}
+
 function App() {
   const initial = useMemo(loadState, []);
   const [expenses, setExpenses] = useState(initial.expenses);
@@ -47,6 +124,7 @@ function App() {
   const [editingId, setEditingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletePendingTarget, setDeletePendingTarget] = useState(null);
+  const canUseNativeNotify = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
@@ -71,6 +149,36 @@ function App() {
     document.body.dataset.theme = settings.darkMode ? "dark" : "light";
   }, [theme, settings.darkMode]);
 
+  useEffect(() => {
+    if (!canUseNativeNotify) return undefined;
+
+    let stopped = false;
+    const syncNotifications = async () => {
+      try {
+        const enabled = await XzbNotify.isEnabled();
+        if (stopped || !enabled?.enabled) return;
+        const result = await XzbNotify.drainNotifications();
+        const entries = normalizeNotificationItems(result?.items || []);
+        if (entries.length) addPendingBatch(entries, { navigate: false });
+      } catch {
+        // Notification access is optional; failed sync should never block bookkeeping.
+      }
+    };
+
+    syncNotifications();
+    const timer = window.setInterval(syncNotifications, 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") syncNotifications();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [canUseNativeNotify]);
+
   function saveExpense(entry) {
     const type = entry.type === "income" ? "income" : "expense";
     const normalized = {
@@ -78,7 +186,7 @@ function App() {
       type,
       category: entry.category || (type === "income" ? "income-other" : "other"),
       amount: Number(entry.amount),
-      id: editingId || `expense-${Date.now()}`,
+      id: editingId || createId("expense"),
       source: entry.source || "手动"
     };
 
@@ -98,7 +206,7 @@ function App() {
       ...entry,
       type,
       category: entry.category || (type === "income" ? "income-other" : "other"),
-      id: `expense-${Date.now()}`,
+      id: createId("expense"),
       amount: Number(entry.amount),
       note: entry.note || "",
       source: entry.source || "识别"
@@ -140,9 +248,15 @@ function App() {
     setDeletePendingTarget(null);
   }
 
-  function addPending(entry) {
-    setPending((items) => [{ ...entry, id: `pending-${Date.now()}` }, ...items]);
-    setActiveTab("home");
+  function addPending(entry, options = {}) {
+    addPendingBatch([entry], options);
+  }
+
+  function addPendingBatch(entries, options = {}) {
+    const normalized = entries.map((entry, index) => normalizePendingEntry(entry, index)).filter(Boolean);
+    if (!normalized.length) return;
+    setPending((items) => mergePendingEntries(items, normalized));
+    if (options.navigate !== false) setActiveTab("home");
   }
 
   return (
@@ -171,7 +285,7 @@ function App() {
             setActiveTab("home");
           }} />
         )}
-        {activeTab === "scan" && <ScanScreen onPending={addPending} />}
+        {activeTab === "scan" && <ScanScreen onPending={addPending} onPendingBatch={addPendingBatch} />}
         {activeTab === "report" && (
           <ReportScreen
             stats={stats}
@@ -376,21 +490,33 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
   );
 }
 
-function ScanScreen({ onPending }) {
+function ScanScreen({ onPending, onPendingBatch }) {
   const [rawText, setRawText] = useState("");
   const [candidate, setCandidate] = useState(null);
+  const [batchCandidates, setBatchCandidates] = useState([]);
   const [preview, setPreview] = useState("");
   const [selectedImageDataUrl, setSelectedImageDataUrl] = useState("");
+  const [imageBatch, setImageBatch] = useState([]);
   const [ocrCrop, setOcrCrop] = useState({ x: 50, y: 50, zoom: 1 });
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
+  const [isBatchRecognizing, setIsBatchRecognizing] = useState(false);
+  const [notificationEnabled, setNotificationEnabled] = useState(false);
+  const [notificationNotice, setNotificationNotice] = useState("");
   const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  const canUseNativeNotify = canUseNativeOcr;
+
+  useEffect(() => {
+    refreshNotificationPermission();
+  }, []);
 
   async function pickImageWithNativeOcr() {
     setCandidate(null);
+    setBatchCandidates([]);
     setRawText("");
     setPreview("");
     setSelectedImageDataUrl("");
+    setImageBatch([]);
     setOcrCrop({ x: 50, y: 50, zoom: 1 });
     setImageNotice("");
 
@@ -402,21 +528,86 @@ function ScanScreen({ onPending }) {
 
     setStatus("正在打开相册");
     try {
-      const result = await XzbOcr.pickImage();
-      const dataUrl = String(result?.dataUrl || "");
-      if (!dataUrl) {
+      const result = await XzbOcr.pickImagesAndRecognize();
+      const results = Array.isArray(result?.results) ? result.results : [];
+      if (!results.length) {
         setStatus("读取失败");
         setImageNotice("没有读到图片内容，请重新选择。");
         return;
       }
-      setPreview(dataUrl);
-      setSelectedImageDataUrl(dataUrl);
-      setStatus("请裁剪后识别");
-      setImageNotice("调整裁剪区域后，点击识别裁剪区域。");
+      const nextImages = results.map((item, index) => ({
+        id: createId(`image-${index}`),
+        dataUrl: "",
+        uri: item?.uri || "",
+        name: `截图 ${index + 1}`,
+        status: item?.text ? "已识别" : "无文字",
+        text: String(item?.text || "")
+      }));
+      const candidates = results
+        .map((item, index) => {
+          const text = String(item?.text || "").trim();
+          if (!text) return null;
+          return {
+            ...parseExpenseText(text),
+            id: createId(`batch-${index}`),
+            source: "截图识别",
+            note: `截图 ${index + 1}`,
+            rawText: text
+          };
+        })
+        .filter(Boolean);
+
+      setImageBatch(nextImages);
+      setBatchCandidates(candidates);
+      setPreview("");
+      setSelectedImageDataUrl("");
+      setRawText(candidates[0]?.rawText || "");
+      setStatus(candidates.length ? `已生成 ${candidates.length} 条候选` : "未识别到账单");
+      setImageNotice(
+        candidates.length
+          ? "批量识别完成，请检查金额和商户后加入待确认。"
+          : "没有生成候选账单，请换更清晰的截图，或用下方单图裁剪识别。"
+      );
     } catch (error) {
       setStatus("等待截图");
       setImageNotice(error?.message || "没有选择图片。");
     }
+  }
+
+  function applySelectedImages(images) {
+    const normalized = images
+      .map((image, index) => ({
+        id: createId(`image-${index}`),
+        dataUrl: String(image?.dataUrl || ""),
+        uri: image?.uri || "",
+        name: `截图 ${index + 1}`,
+        status: "等待识别",
+        text: ""
+      }))
+      .filter((image) => image.dataUrl);
+
+    if (!normalized.length) {
+      setStatus("读取失败");
+      setImageNotice("没有读到图片内容，请重新选择。");
+      return;
+    }
+
+    setImageBatch(normalized);
+    setPreview(normalized[0].dataUrl);
+    setRawText("");
+    setCandidate(null);
+    setBatchCandidates([]);
+
+    if (normalized.length === 1) {
+      setSelectedImageDataUrl(normalized[0].dataUrl);
+      setStatus("请裁剪后识别");
+      setImageNotice("调整裁剪区域后，点击识别裁剪区域；也可以直接批量识别这一张。");
+      return;
+    }
+
+    setSelectedImageDataUrl("");
+    setStatus(`已选择 ${normalized.length} 张`);
+    setImageNotice("可直接批量识别全部截图；单张裁剪请只选择一张图片。");
   }
 
   async function recognizeImageDataUrl(dataUrl) {
@@ -429,8 +620,7 @@ function ScanScreen({ onPending }) {
     setStatus("正在识别截图");
     setImageNotice("");
     try {
-      const result = await XzbOcr.recognizeImage({ dataUrl });
-      const text = String(result?.text || "").trim();
+      const text = await readImageText(dataUrl);
       setRawText(text);
 
       if (!text) {
@@ -447,25 +637,39 @@ function ScanScreen({ onPending }) {
     }
   }
 
-  async function handleImage(file) {
-    if (!file) return;
-    const dataUrl = await readFileAsDataUrl(file);
-    setPreview(dataUrl);
-    setSelectedImageDataUrl(dataUrl);
+  async function readImageText(dataUrl) {
+    const result = await XzbOcr.recognizeImage({ dataUrl });
+    return String(result?.text || "").trim();
+  }
+
+  async function handleImages(fileList) {
+    const files = Array.from(fileList || []).slice(0, 12);
+    if (!files.length) return;
+    if (canUseNativeOcr && files.length > 1) {
+      setStatus("请用原生批量入口");
+      setImageNotice("手机端多图请点上方“批量选择截图”，避免大图在 WebView 中占用过多内存。");
+      return;
+    }
+
+    const images = await Promise.all(
+      files.map(async (file) => ({
+        dataUrl: await readFileAsDataUrl(file),
+        uri: "",
+        name: file.name
+      }))
+    );
+
     setOcrCrop({ x: 50, y: 50, zoom: 1 });
-    setRawText("");
-    setCandidate(null);
-    setStatus("请裁剪后识别");
-    setImageNotice("调整裁剪区域后，点击识别裁剪区域。");
+    applySelectedImages(images);
 
     if (canUseNativeOcr) {
       return;
     }
 
-    if ("TextDetector" in window) {
+    if (files.length === 1 && "TextDetector" in window) {
       try {
         const detector = new window.TextDetector();
-        const bitmap = await createImageBitmap(file);
+        const bitmap = await createImageBitmap(files[0]);
         const detections = await detector.detect(bitmap);
         const text = detections.map((item) => item.rawValue).join("\n");
         setRawText(text);
@@ -477,7 +681,7 @@ function ScanScreen({ onPending }) {
       }
     } else {
       setStatus("已导入，等待文字");
-      setImageNotice("网页备用导入只能预览截图；手机安装包请用上方系统选图识别。");
+      setImageNotice("网页备用导入只能预览截图；手机安装包可批量识别多张截图。");
     }
   }
 
@@ -494,6 +698,124 @@ function ScanScreen({ onPending }) {
     }
 
     recognizeFromText(rawText, "截图识别");
+  }
+
+  async function recognizeBatchScreenshots() {
+    if (!imageBatch.length) {
+      setImageNotice("请先选择一张或多张截图。");
+      return;
+    }
+    if (!canUseNativeOcr) {
+      setImageNotice("批量 OCR 需要在安卓安装包里使用。");
+      return;
+    }
+
+    setIsBatchRecognizing(true);
+    setBatchCandidates([]);
+    setCandidate(null);
+    setImageNotice("");
+
+    const results = [];
+    for (let index = 0; index < imageBatch.length; index += 1) {
+      const image = imageBatch[index];
+      setStatus(`正在识别 ${index + 1}/${imageBatch.length}`);
+      setImageBatch((items) =>
+        items.map((item) => (item.id === image.id ? { ...item, status: "识别中" } : item))
+      );
+
+      try {
+        const text = await readImageText(image.dataUrl);
+        const parsed = text ? parseExpenseText(text) : null;
+        setImageBatch((items) =>
+          items.map((item) => (item.id === image.id ? { ...item, status: text ? "已识别" : "无文字", text } : item))
+        );
+        if (parsed) {
+          results.push({
+            ...parsed,
+            id: createId(`batch-${index}`),
+            source: "截图识别",
+            note: image.name || "",
+            rawText: text
+          });
+        }
+      } catch {
+        setImageBatch((items) =>
+          items.map((item) => (item.id === image.id ? { ...item, status: "识别失败" } : item))
+        );
+      }
+    }
+
+    setBatchCandidates(results);
+    setIsBatchRecognizing(false);
+    setStatus(results.length ? `已生成 ${results.length} 条候选` : "未识别到账单");
+    setImageNotice(
+      results.length
+        ? "批量识别完成，请检查金额和商户后加入待确认。"
+        : "没有生成候选账单，请换更清晰的截图或改用裁剪识别。"
+    );
+  }
+
+  function saveBatchCandidates() {
+    const validCandidates = batchCandidates.filter((item) => Number(item.amount) > 0);
+    if (!validCandidates.length) {
+      setImageNotice("没有可加入待确认的账单，请先检查识别结果。");
+      return;
+    }
+    onPendingBatch(validCandidates);
+    setBatchCandidates([]);
+    setImageBatch([]);
+    setSelectedImageDataUrl("");
+    setPreview("");
+    setRawText("");
+    setStatus("等待截图");
+    setImageNotice("");
+  }
+
+  async function refreshNotificationPermission() {
+    if (!canUseNativeNotify) return;
+    try {
+      const result = await XzbNotify.isEnabled();
+      setNotificationEnabled(Boolean(result?.enabled));
+    } catch {
+      setNotificationEnabled(false);
+    }
+  }
+
+  async function openNotificationSettings() {
+    if (!canUseNativeNotify) {
+      setNotificationNotice("通知自动记账需要在安卓安装包里开启通知访问权限。");
+      return;
+    }
+    await XzbNotify.openSettings();
+    setNotificationNotice("已打开系统设置。开启小账本通知访问权限后，回到 App 点“同步新通知”。");
+  }
+
+  async function syncNotificationBills() {
+    if (!canUseNativeNotify) {
+      setNotificationNotice("通知自动记账需要在安卓安装包里使用。");
+      return;
+    }
+
+    try {
+      const enabled = await XzbNotify.isEnabled();
+      setNotificationEnabled(Boolean(enabled?.enabled));
+      if (!enabled?.enabled) {
+        setNotificationNotice("请先开启通知访问权限。");
+        return;
+      }
+
+      const result = await XzbNotify.drainNotifications();
+      const entries = normalizeNotificationItems(result?.items || []);
+      if (!entries.length) {
+        setNotificationNotice("暂时没有新的微信/支付宝付款通知。开启权限后，只能捕获之后出现的新通知。");
+        return;
+      }
+
+      onPendingBatch(entries, { navigate: false });
+      setNotificationNotice(`已同步 ${entries.length} 条通知到账单待确认。`);
+    } catch (error) {
+      setNotificationNotice(error?.message || "同步通知失败，请确认权限已开启。");
+    }
   }
 
   function recognizeFromText(text, source) {
@@ -520,8 +842,11 @@ function ScanScreen({ onPending }) {
     if (!candidate) return;
     onPending(candidate);
     setCandidate(null);
+    setBatchCandidates([]);
     setRawText("");
     setSelectedImageDataUrl("");
+    setImageBatch([]);
+    setPreview("");
     setStatus("等待截图");
     setImageNotice("");
   }
@@ -533,18 +858,46 @@ function ScanScreen({ onPending }) {
         <h2>识别后确认</h2>
       </header>
 
+      <section className="notification-sync-card">
+        <div>
+          <span>通知自动记账</span>
+          <strong>{notificationEnabled ? "已开启" : "待开启"}</strong>
+          <p>开启安卓通知访问权限后，微信/支付宝的新付款通知会自动进入待确认。</p>
+        </div>
+        <div className="notification-actions">
+          <button className="secondary-button" type="button" onClick={openNotificationSettings}>
+            开启权限
+          </button>
+          <button className="primary-button" type="button" onClick={syncNotificationBills}>
+            同步新通知
+          </button>
+        </div>
+        {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
+      </section>
+
       <div className="import-panel">
         <button className="primary-button full" type="button" onClick={pickImageWithNativeOcr}>
           <ScanIcon />
-          选择截图并识别
+          批量选择截图
         </button>
         <label className="upload-box">
-          <input type="file" accept="image/*" onChange={(event) => handleImage(event.target.files?.[0])} />
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => {
+              handleImages(event.target.files);
+              event.target.value = "";
+            }}
+          />
           {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
           <span>{status}</span>
         </label>
         {selectedImageDataUrl && (
           <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={setOcrCrop} />
+        )}
+        {imageBatch.length > 0 && (
+          <BatchImageQueue images={imageBatch} />
         )}
         <textarea
           value={rawText}
@@ -558,6 +911,11 @@ function ScanScreen({ onPending }) {
           <ScanIcon />
           {selectedImageDataUrl ? "识别裁剪区域" : "开始识别"}
         </button>
+        {imageBatch.length > 0 && imageBatch.some((image) => image.dataUrl) && (
+          <button className="secondary-button full" type="button" onClick={recognizeBatchScreenshots} disabled={isBatchRecognizing}>
+            {isBatchRecognizing ? "批量识别中..." : `批量识别 ${imageBatch.length} 张`}
+          </button>
+        )}
         {imageNotice && <p className="scan-feedback">{imageNotice}</p>}
       </div>
 
@@ -570,7 +928,116 @@ function ScanScreen({ onPending }) {
         />
       )}
 
+      {batchCandidates.length > 0 && (
+        <BatchCandidateEditor
+          candidates={batchCandidates}
+          setCandidates={setBatchCandidates}
+          onSave={saveBatchCandidates}
+          onCancel={() => setBatchCandidates([])}
+        />
+      )}
+
     </Screen>
+  );
+}
+
+function BatchImageQueue({ images }) {
+  return (
+    <div className="batch-image-list">
+      {images.map((image, index) => (
+        <div className="batch-image-item" key={image.id}>
+          <span>{image.name || `截图 ${index + 1}`}</span>
+          <b>{image.status}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
+  function updateCandidate(id, patch) {
+    setCandidates((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  return (
+    <section className="candidate-card batch-candidate-card">
+      <div className="candidate-head">
+        <div>
+          <span>批量识别结果</span>
+          <strong>{candidates.length} 条</strong>
+        </div>
+      </div>
+
+      <div className="batch-candidate-list">
+        {candidates.map((item, index) => {
+          const categorySource = item.type === "income" ? incomeCategories : categories;
+          return (
+            <article className="batch-candidate-item" key={item.id}>
+              <div className="batch-candidate-title">
+                <span>账单 {index + 1}</span>
+                <b>{item.confidence}%</b>
+              </div>
+              <div className="batch-fields">
+                <label>
+                  <span>类型</span>
+                  <select
+                    value={item.type || "expense"}
+                    onChange={(event) => {
+                      const type = event.target.value;
+                      updateCandidate(item.id, {
+                        type,
+                        category: type === "income" ? "salary" : "food"
+                      });
+                    }}
+                  >
+                    <option value="expense">支出</option>
+                    <option value="income">收入</option>
+                  </select>
+                </label>
+                <label>
+                  <span>金额</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={item.amount}
+                    onChange={(event) => updateCandidate(item.id, { amount: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>商户</span>
+                  <input value={item.merchant} onChange={(event) => updateCandidate(item.id, { merchant: event.target.value })} />
+                </label>
+                <label>
+                  <span>分类</span>
+                  <select value={item.category} onChange={(event) => updateCandidate(item.id, { category: event.target.value })}>
+                    {categorySource.map((category) => (
+                      <option key={category.id} value={category.id}>{category.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>日期</span>
+                  <input type="date" value={item.date} onChange={(event) => updateCandidate(item.id, { date: event.target.value })} />
+                </label>
+                <label>
+                  <span>时间</span>
+                  <input type="time" value={item.time} onChange={(event) => updateCandidate(item.id, { time: event.target.value })} />
+                </label>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="form-actions">
+        <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+        <button className="primary-button" type="button" onClick={onSave}>
+          <CheckIcon />
+          加入待确认
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -907,6 +1374,7 @@ function PendingCard({ item, onConfirm, onDelete }) {
         <div>
           <strong>{local.merchant}</strong>
           <span>{recordTypeLabels[local.type || "expense"]} · {local.source} · {local.date} {local.time}</span>
+          {local.duplicateHint && <em className="duplicate-hint">检测到相似账单，请核对后确认</em>}
         </div>
         <b className={local.type === "income" ? "income-amount" : ""}>{signedMoney(local.amount, local.type)}</b>
       </div>
@@ -1225,6 +1693,7 @@ async function cropCoverImage(src, crop) {
   context.fillStyle = "#eef3ec";
   context.fillRect(0, 0, outputWidth, outputHeight);
   context.drawImage(image, dx, dy, drawWidth, drawHeight);
+  enhanceCanvasForOcr(context, outputWidth, outputHeight);
 
   return canvas.toDataURL("image/jpeg", 0.9);
 }
@@ -1251,6 +1720,24 @@ async function cropOcrImage(src, crop) {
   context.drawImage(image, dx, dy, drawWidth, drawHeight);
 
   return canvas.toDataURL("image/jpeg", 0.92);
+}
+
+function enhanceCanvasForOcr(context, width, height) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    const contrasted = clamp((gray - 128) * 1.18 + 128, 0, 255);
+    const value = contrasted > 238 ? 255 : contrasted < 28 ? 0 : contrasted;
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
+  }
+  context.putImageData(imageData, 0, 0);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function loadImage(src) {

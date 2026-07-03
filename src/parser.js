@@ -1,4 +1,5 @@
 import { categories, incomeCategories } from "./data.js";
+import { createId } from "./ids.js";
 
 const MONEY_VALUE = "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)";
 const amountRegexes = [
@@ -20,7 +21,7 @@ const platformRules = [
 ];
 
 const merchantPatterns = [
-  /(?:收款方|收款账户|商户名称|商户|商家|交易对象|交易对方|对方账户|对方|付款给|支付给|转账给)\s*[:：]?\s*([^\n￥¥,，。；;]+)/i,
+  /(?:收款方|收款账户|付款方|付款账户|商户名称|商户|商家|交易对象|交易对方|对方账户|对方|付款给|支付给|转账给)\s*[:：]?\s*([^\n￥¥,，。；;]+)/i,
   /向\s*([^\n￥¥,，。；;]+?)\s*(?:付款|支付|转账)/i,
   /(?:微信支付|支付宝|付款成功|支付成功)\s*[-—]?\s*([^\n￥¥,，。；;]+?)\s*(?:付款|支付|消费|交易|收款)?(?:成功|￥|¥|$)/i
 ];
@@ -40,7 +41,7 @@ export function parseExpenseText(rawText) {
   const confidence = scoreConfidence({ amount, merchant, date, time, method });
 
   return {
-    id: `pending-${Date.now()}`,
+    id: createId("pending"),
     type,
     amount,
     merchant,
@@ -208,7 +209,7 @@ function extractMerchant(compact, lines) {
   }
 
   for (let index = 0; index < lines.length; index += 1) {
-    if (/收款方|商户名称|商户|商家|交易对象|交易对方|对方|付款给|支付给|转账给/.test(lines[index])) {
+    if (/收款方|付款方|商户名称|商户|商家|交易对象|交易对方|对方|付款给|支付给|转账给/.test(lines[index])) {
       const sameLine = lines[index].split(/[:：]/).slice(1).join(":");
       const nextLine = lines[index + 1] || "";
       const merchant = cleanMerchant(sameLine || nextLine);
@@ -227,8 +228,10 @@ function extractMerchant(compact, lines) {
 
 function cleanMerchant(value) {
   const cleaned = String(value || "")
-    .replace(/(付款|支付|成功|消费|收款|账单|截图|OCR|微信支付|支付宝|商户名称|商户|交易对象|交易对方|收款方|对方账户|对方)/g, "")
+    .replace(/(付款方|付款账户|收款方|收款账户|付款|支付|成功|消费|收款|账单|截图|OCR|微信支付|支付宝|商户名称|商户|交易对象|交易对方|对方账户|对方)/g, "")
     .replace(/(使用|零钱支付|余额支付|账单详情|查看详情|详情|完成)/g, "")
+    .replace(/[0-9]{4}[-/.年][0-9]{1,2}[-/.月][0-9]{1,2}日?/g, "")
+    .replace(/[0-9]{1,2}[:：][0-9]{2}/g, "")
     .replace(/[：:，,。；;￥¥]/g, "")
     .replace(/\s+/g, " ")
     .trim();

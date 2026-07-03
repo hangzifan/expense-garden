@@ -19,6 +19,7 @@ import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+import java.util.ArrayList;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -53,6 +54,16 @@ public class XzbOcrPlugin extends Plugin {
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivityForResult(call, intent, "pickImagesResult");
+    }
+
+    @PluginMethod
+    public void pickImagesAndRecognize(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(call, intent, "pickImagesRecognizeResult");
     }
 
     @PluginMethod
@@ -96,8 +107,8 @@ public class XzbOcrPlugin extends Plugin {
 
         Uri uri = data.getData();
         try {
-            InputImage image = InputImage.fromFilePath(getContext(), uri);
-            processImage(call, image, uri.toString());
+            Bitmap bitmap = decodeUriBitmap(uri);
+            processImage(call, InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0), uri.toString());
         } catch (IOException error) {
             call.reject("读取图片失败", error);
         }
@@ -142,12 +153,10 @@ public class XzbOcrPlugin extends Plugin {
                 int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
                 for (int i = 0; i < count; i++) {
                     Uri uri = clipData.getItemAt(i).getUri();
-                    if (uri != null) {
-                        images.put(readImageAsObject(uri));
-                    }
+                    if (uri != null) images.put(readImageMetadata(uri));
                 }
             } else if (data.getData() != null) {
-                images.put(readImageAsObject(data.getData()));
+                images.put(readImageMetadata(data.getData()));
             }
 
             if (images.length() == 0) {
@@ -161,6 +170,30 @@ public class XzbOcrPlugin extends Plugin {
         } catch (IOException error) {
             call.reject("读取图片失败", error);
         }
+    }
+
+    @ActivityCallback
+    private void pickImagesRecognizeResult(PluginCall call, ActivityResult result) {
+        if (call == null) {
+            return;
+        }
+
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null) {
+            call.reject("没有选择图片");
+            return;
+        }
+
+        ArrayList<Uri> uris = collectImageUris(data);
+        if (uris.isEmpty()) {
+            call.reject("没有读到图片内容");
+            return;
+        }
+
+        TextRecognizer recognizer = TextRecognition.getClient(
+            new ChineseTextRecognizerOptions.Builder().build()
+        );
+        recognizeUriAt(call, recognizer, uris, 0, new JSArray());
     }
 
     private void processImage(PluginCall call, InputImage image, String uri) {
@@ -199,6 +232,73 @@ public class XzbOcrPlugin extends Plugin {
         }
     }
 
+    private ArrayList<Uri> collectImageUris(Intent data) {
+        ArrayList<Uri> uris = new ArrayList<>();
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
+            for (int i = 0; i < count; i++) {
+                Uri uri = clipData.getItemAt(i).getUri();
+                if (uri != null) uris.add(uri);
+            }
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        return uris;
+    }
+
+    private void recognizeUriAt(PluginCall call, TextRecognizer recognizer, ArrayList<Uri> uris, int index, JSArray results) {
+        if (index >= uris.size()) {
+            JSObject ret = new JSObject();
+            ret.put("results", results);
+            call.resolve(ret);
+            recognizer.close();
+            return;
+        }
+
+        Uri uri = uris.get(index);
+        try {
+            Bitmap bitmap = decodeUriBitmap(uri);
+            InputImage image = InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0);
+            recognizer.process(image)
+                .addOnSuccessListener(text -> {
+                    JSObject item = new JSObject();
+                    item.put("uri", uri.toString());
+                    item.put("text", text.getText());
+                    results.put(item);
+                    recognizeUriAt(call, recognizer, uris, index + 1, results);
+                })
+                .addOnFailureListener(error -> {
+                    JSObject item = new JSObject();
+                    item.put("uri", uri.toString());
+                    item.put("text", "");
+                    item.put("error", error.getMessage());
+                    results.put(item);
+                    recognizeUriAt(call, recognizer, uris, index + 1, results);
+                });
+        } catch (IOException error) {
+            JSObject item = new JSObject();
+            item.put("uri", uri.toString());
+            item.put("text", "");
+            item.put("error", error.getMessage());
+            results.put(item);
+            recognizeUriAt(call, recognizer, uris, index + 1, results);
+        }
+    }
+
+    private Bitmap decodeUriBitmap(Uri uri) throws IOException {
+        try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+            if (input == null) {
+                throw new IOException("openInputStream returned null");
+            }
+            Bitmap bitmap = BitmapFactory.decodeStream(input);
+            if (bitmap == null) {
+                throw new IOException("Unable to decode bitmap");
+            }
+            return bitmap;
+        }
+    }
+
     private JSObject readImageAsObject(Uri uri) throws IOException {
         String mimeType = getContext().getContentResolver().getType(uri);
         if (mimeType == null || mimeType.trim().isEmpty()) {
@@ -208,6 +308,12 @@ public class XzbOcrPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("uri", uri.toString());
         ret.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+        return ret;
+    }
+
+    private JSObject readImageMetadata(Uri uri) throws IOException {
+        JSObject ret = new JSObject();
+        ret.put("uri", uri.toString());
         return ret;
     }
 
@@ -223,13 +329,42 @@ public class XzbOcrPlugin extends Plugin {
             targetLongSide = 2600;
         }
 
-        if (targetLongSide == longSide) {
-            return bitmap;
+        Bitmap scaled = bitmap;
+
+        if (targetLongSide != longSide) {
+            float scale = (float) targetLongSide / (float) longSide;
+            int targetWidth = Math.max(1, Math.round(width * scale));
+            int targetHeight = Math.max(1, Math.round(height * scale));
+            scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true);
         }
 
-        float scale = (float) targetLongSide / (float) longSide;
-        int targetWidth = Math.max(1, Math.round(width * scale));
-        int targetHeight = Math.max(1, Math.round(height * scale));
-        return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true);
+        return enhanceBitmapForOcr(scaled);
+    }
+
+    private Bitmap enhanceBitmapForOcr(Bitmap bitmap) {
+        Bitmap mutable = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+        int width = mutable.getWidth();
+        int height = mutable.getHeight();
+        int[] pixels = new int[width * height];
+        mutable.getPixels(pixels, 0, width, 0, 0, width, height);
+
+        for (int i = 0; i < pixels.length; i++) {
+            int color = pixels[i];
+            int alpha = (color >>> 24) & 0xff;
+            int red = (color >>> 16) & 0xff;
+            int green = (color >>> 8) & 0xff;
+            int blue = color & 0xff;
+            int gray = Math.round((float) (red * 0.299 + green * 0.587 + blue * 0.114));
+            int contrasted = clamp(Math.round((gray - 128) * 1.18f + 128));
+            int value = contrasted > 238 ? 255 : (contrasted < 28 ? 0 : contrasted);
+            pixels[i] = (alpha << 24) | (value << 16) | (value << 8) | value;
+        }
+
+        mutable.setPixels(pixels, 0, width, 0, 0, width, height);
+        return mutable;
+    }
+
+    private int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
     }
 }

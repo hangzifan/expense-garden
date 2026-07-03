@@ -1,60 +1,57 @@
 # Android 原生桥接设计
 
-小账本第一版的前端已经把通知识别和截图识别统一为同一条链路：
-
-1. 原生层拿到通知文本或 OCR 文本。
-2. 调用 WebView 中的 `window.__xiaozhangbenReceiveText(text, source)`。
-3. 前端解析金额、商户、时间、来源和建议分类。
-4. 用户在「待确认」里点击「确认入账」。
+小账本 Android 版使用 Capacitor 插件把系统通知和 ML Kit OCR 接到前端账本。原生层只做采集和识别，前端仍负责解析、分类、待确认和入账。
 
 ## 通知识别
 
-Android APK 需要实现 `NotificationListenerService`：
+Android APK 实现 `XzbNotificationListenerService`：
 
-- 只读取微信支付、支付宝相关通知。
-- 不保存账号、密码、验证码和聊天内容。
-- 从通知 `title` / `text` / `subText` 提取纯文本。
-- 文本通过 Capacitor 插件或 WebView bridge 传给前端。
-- 前端只创建待确认账单，不自动入账。
+- 只监听微信与支付宝通知。
+- 只保留付款、收款、退款、到账等疑似账单通知。
+- 不读取账号密码，不读取聊天记录，不自动入账。
+- 每条命中的通知写成一个独立 JSON 文件，先写 `.tmp`，再原子重命名为 `.json`。
 
-建议桥接格式：
+前端通过 `XzbNotify.drainNotifications()` 拉取队列：
 
 ```json
 {
-  "source": "通知识别",
-  "provider": "微信",
-  "text": "微信支付 付款成功 ￥36.50 收款方：美团外卖 2026-07-01 12:24"
+  "items": [
+    {
+      "id": "com.tencent.mm:100:1783000000000:123456",
+      "packageName": "com.tencent.mm",
+      "appName": "微信",
+      "postTime": 1783000000000,
+      "rawText": "微信支付 付款成功 ￥36.50 收款方：美团外卖 2026-07-01 12:24"
+    }
+  ]
 }
 ```
+
+拉取后，插件只删除已经枚举到的 JSON 文件。拉取期间新进来的通知会写入新文件，不会被清空操作覆盖。
 
 ## 截图 OCR
 
-Android APK 推荐接入 Google ML Kit Text Recognition，流程如下：
+截图 OCR 使用 `XzbOcr` 插件：
 
-- 用户在应用内选择支付成功截图或账单截图。
-- 原生层对图片做本机 OCR。
-- OCR 文本传给前端解析器。
-- 前端显示识别结果，由用户确认分类后入账。
+- 单图裁剪：前端生成裁剪图后调用 `recognizeImage({ dataUrl })`。
+- 批量识别：前端调用 `pickImagesAndRecognize()`，原生层逐张读取 URI 并使用 ML Kit 识别，只返回文本结果。
+- 原生层会在 OCR 前缩放图片并做轻度灰度/对比增强，避免前端主线程处理大图像素。
 
-建议桥接格式：
+批量识别返回格式：
 
 ```json
 {
-  "source": "截图识别",
-  "provider": "支付宝",
-  "text": "支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32"
+  "results": [
+    {
+      "uri": "content://media/...",
+      "text": "支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32"
+    }
+  ]
 }
 ```
 
-## 前端接入点
+## 前端处理
 
-后续封装 APK 时，在 `src/App.jsx` 中注册一个全局方法即可：
+前端统一调用 `parseExpenseText(text)` 解析金额、商户、日期、支付方式和收入/支出类型。
 
-```js
-window.__xiaozhangbenReceiveText = (text, source) => {
-  const candidate = parseExpenseText(text);
-  addPending({ ...candidate, source });
-};
-```
-
-当前 PWA 版本已经提供相同的手动入口，用于测试通知文本和截图 OCR 文本的解析效果。
+识别结果先进入「待确认」，用户可以修改金额、商户、分类、日期和时间后再确认入账。

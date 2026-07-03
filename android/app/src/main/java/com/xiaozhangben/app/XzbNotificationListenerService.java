@@ -1,18 +1,15 @@
 package com.xiaozhangben.app;
 
 import android.app.Notification;
-import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
+import java.io.IOException;
 import java.util.Locale;
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 public class XzbNotificationListenerService extends NotificationListenerService {
-    private static final int MAX_STORED_ITEMS = 80;
-
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || !isTargetPackage(sbn.getPackageName())) {
@@ -32,7 +29,7 @@ public class XzbNotificationListenerService extends NotificationListenerService 
             item.put("postTime", sbn.getPostTime());
             item.put("rawText", rawText);
             storeItem(item);
-        } catch (JSONException ignored) {
+        } catch (JSONException | IOException ignored) {
             // If one notification is malformed, skip it and keep listening.
         }
     }
@@ -100,25 +97,7 @@ public class XzbNotificationListenerService extends NotificationListenerService 
         return sbn.getPackageName() + ":" + sbn.getId() + ":" + sbn.getPostTime() + ":" + hash;
     }
 
-    private synchronized void storeItem(JSONObject item) throws JSONException {
-        SharedPreferences prefs = getSharedPreferences(XzbNotificationStore.PREFS, MODE_PRIVATE);
-        JSONArray previous = new JSONArray(prefs.getString(XzbNotificationStore.KEY_ITEMS, "[]"));
-        JSONArray next = new JSONArray();
-        String nextId = item.optString("id");
-        String nextRawText = item.optString("rawText");
-
-        next.put(item);
-        for (int i = 0; i < previous.length() && next.length() < MAX_STORED_ITEMS; i++) {
-            JSONObject old = previous.optJSONObject(i);
-            if (old == null) {
-                continue;
-            }
-            if (nextId.equals(old.optString("id")) || nextRawText.equals(old.optString("rawText"))) {
-                continue;
-            }
-            next.put(old);
-        }
-
-        prefs.edit().putString(XzbNotificationStore.KEY_ITEMS, next.toString()).apply();
+    private void storeItem(JSONObject item) throws IOException {
+        XzbNotificationStore.enqueue(getApplicationContext(), item);
     }
 }
