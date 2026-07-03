@@ -1,12 +1,14 @@
 package com.xiaozhangben.app;
 
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.util.Base64;
 import androidx.activity.result.ActivityResult;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -23,6 +25,8 @@ import java.io.InputStream;
 
 @CapacitorPlugin(name = "XzbOcr")
 public class XzbOcrPlugin extends Plugin {
+    private static final int MAX_PICKED_IMAGES = 12;
+
     @PluginMethod
     public void pickImageAndRecognize(PluginCall call) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -39,6 +43,16 @@ public class XzbOcrPlugin extends Plugin {
         intent.setType("image/*");
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivityForResult(call, intent, "pickImageOnlyResult");
+    }
+
+    @PluginMethod
+    public void pickImages(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(call, intent, "pickImagesResult");
     }
 
     @PluginMethod
@@ -62,7 +76,7 @@ public class XzbOcrPlugin extends Plugin {
                 call.reject("无法读取图片内容");
                 return;
             }
-            processImage(call, InputImage.fromBitmap(bitmap, 0), null);
+            processImage(call, InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0), null);
         } catch (IllegalArgumentException error) {
             call.reject("图片格式不正确", error);
         }
@@ -103,14 +117,46 @@ public class XzbOcrPlugin extends Plugin {
 
         Uri uri = data.getData();
         try {
-            String mimeType = getContext().getContentResolver().getType(uri);
-            if (mimeType == null || mimeType.trim().isEmpty()) {
-                mimeType = "image/jpeg";
+            call.resolve(readImageAsObject(uri));
+        } catch (IOException error) {
+            call.reject("读取图片失败", error);
+        }
+    }
+
+    @ActivityCallback
+    private void pickImagesResult(PluginCall call, ActivityResult result) {
+        if (call == null) {
+            return;
+        }
+
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null) {
+            call.reject("没有选择图片");
+            return;
+        }
+
+        try {
+            JSArray images = new JSArray();
+            ClipData clipData = data.getClipData();
+            if (clipData != null) {
+                int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
+                for (int i = 0; i < count; i++) {
+                    Uri uri = clipData.getItemAt(i).getUri();
+                    if (uri != null) {
+                        images.put(readImageAsObject(uri));
+                    }
+                }
+            } else if (data.getData() != null) {
+                images.put(readImageAsObject(data.getData()));
             }
-            byte[] bytes = readUriBytes(uri);
+
+            if (images.length() == 0) {
+                call.reject("没有读到图片内容");
+                return;
+            }
+
             JSObject ret = new JSObject();
-            ret.put("uri", uri.toString());
-            ret.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+            ret.put("images", images);
             call.resolve(ret);
         } catch (IOException error) {
             call.reject("读取图片失败", error);
@@ -151,5 +197,39 @@ public class XzbOcrPlugin extends Plugin {
             }
             return output.toByteArray();
         }
+    }
+
+    private JSObject readImageAsObject(Uri uri) throws IOException {
+        String mimeType = getContext().getContentResolver().getType(uri);
+        if (mimeType == null || mimeType.trim().isEmpty()) {
+            mimeType = "image/jpeg";
+        }
+        byte[] bytes = readUriBytes(uri);
+        JSObject ret = new JSObject();
+        ret.put("uri", uri.toString());
+        ret.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+        return ret;
+    }
+
+    private Bitmap prepareBitmapForOcr(Bitmap bitmap) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int longSide = Math.max(width, height);
+        int targetLongSide = longSide;
+
+        if (longSide < 1800) {
+            targetLongSide = 1800;
+        } else if (longSide > 2600) {
+            targetLongSide = 2600;
+        }
+
+        if (targetLongSide == longSide) {
+            return bitmap;
+        }
+
+        float scale = (float) targetLongSide / (float) longSide;
+        int targetWidth = Math.max(1, Math.round(width * scale));
+        int targetHeight = Math.max(1, Math.round(height * scale));
+        return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true);
     }
 }
