@@ -290,7 +290,7 @@ body[data-theme="dark"] .cover-data-area {
 
 .quick-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -486,6 +486,22 @@ body[data-theme="dark"] .cover-data-area {
   align-items: center;
   gap: 10px;
   padding: 12px;
+}
+
+.expense-row > div {
+  min-width: 0;
+}
+
+.expense-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row-icon {

@@ -4,7 +4,6 @@ import { categories, coverPresets, incomeCategories, methods, themes } from "./d
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
 import { parseExpenseText, suggestCategory } from "./parser.js";
 import {
-  BellIcon,
   ChartIcon,
   CheckIcon,
   EditIcon,
@@ -54,7 +53,7 @@ function App() {
   const currentMonth = today().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const monthlyExpenses = useMemo(
-    () => expenses.filter((expense) => expense.date?.startsWith(selectedMonth)),
+    () => sortRecordsByDateTime(expenses.filter((expense) => expense.date?.startsWith(selectedMonth))),
     [expenses, selectedMonth]
   );
   const stats = useMemo(
@@ -278,7 +277,6 @@ function HomeScreen({
         <div className="quick-grid">
           <ActionButton icon={PlusIcon} label="记一笔" onClick={() => onTab("add")} />
           <ActionButton icon={UploadIcon} label="导入截图" onClick={() => onTab("scan")} />
-          <ActionButton icon={BellIcon} label="通知识别" onClick={() => onTab("scan")} />
         </div>
 
         <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
@@ -380,14 +378,12 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
 
 function ScanScreen({ onPending }) {
   const [rawText, setRawText] = useState("");
-  const [notificationText, setNotificationText] = useState("");
   const [candidate, setCandidate] = useState(null);
   const [preview, setPreview] = useState("");
   const [selectedImageDataUrl, setSelectedImageDataUrl] = useState("");
   const [ocrCrop, setOcrCrop] = useState({ x: 50, y: 50, zoom: 1 });
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
-  const [notificationNotice, setNotificationNotice] = useState("");
   const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
   async function pickImageWithNativeOcr() {
@@ -502,13 +498,9 @@ function ScanScreen({ onPending }) {
 
   function recognizeFromText(text, source) {
     const normalizedText = String(text || "").trim();
-    const setSourceNotice = source === "截图识别" ? setImageNotice : setNotificationNotice;
     if (!normalizedText) {
-      const message = source === "截图识别"
-        ? "没有可识别的文字，请先粘贴账单文字。"
-        : "请先粘贴微信或支付宝通知文本。";
-      if (source === "截图识别") setStatus("缺少识别文本");
-      setSourceNotice(message);
+      setStatus("缺少识别文本");
+      setImageNotice("没有可识别的文字，请先粘贴账单文字。");
       setCandidate(null);
       return;
     }
@@ -516,12 +508,12 @@ function ScanScreen({ onPending }) {
     const parsed = parseExpenseText(normalizedText);
     const nextCandidate = { ...parsed, source };
     setCandidate(nextCandidate);
-    setSourceNotice(
+    setImageNotice(
       !nextCandidate.amount || nextCandidate.merchant === "未识别商户"
         ? "识别结果不完整，请检查金额和商户后再确认。"
         : "已生成候选账单，请确认后入账。"
     );
-    if (source === "截图识别") setStatus("已生成候选账单");
+    setStatus("已生成候选账单");
   }
 
   function saveCandidate() {
@@ -529,11 +521,9 @@ function ScanScreen({ onPending }) {
     onPending(candidate);
     setCandidate(null);
     setRawText("");
-    setNotificationText("");
     setSelectedImageDataUrl("");
     setStatus("等待截图");
     setImageNotice("");
-    setNotificationNotice("");
   }
 
   return (
@@ -580,32 +570,6 @@ function ScanScreen({ onPending }) {
         />
       )}
 
-      <SectionTitle title="通知识别" aside="微信 / 支付宝" />
-      <div className="import-panel compact">
-        <textarea
-          value={notificationText}
-          onChange={(event) => setNotificationText(event.target.value)}
-          placeholder="微信支付 付款成功 ￥28.80 收款方：茶百道 2026-07-01 15:06"
-        />
-        <div className="sample-row">
-          <button type="button" onClick={() => setNotificationText("微信支付 付款成功 ￥36.50 收款方：美团外卖 2026-07-01 12:24")}>微信样例</button>
-          <button type="button" onClick={() => setNotificationText("支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32")}>支付宝样例</button>
-        </div>
-        <button className="secondary-button full" type="button" onClick={() => recognizeFromText(notificationText, "通知识别")}>
-          <BellIcon />
-          识别通知
-        </button>
-        {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
-      </div>
-
-      {candidate?.source === "通知识别" && (
-        <CandidateEditor
-          candidate={candidate}
-          setCandidate={setCandidate}
-          onSave={saveCandidate}
-          onCancel={() => setCandidate(null)}
-        />
-      )}
     </Screen>
   );
 }
@@ -852,13 +816,6 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
         </section>
 
         <section className="settings-panel">
-          <div className="permission-card">
-            <BellIcon />
-            <div>
-              <strong>通知识别</strong>
-              <span>等待安卓授权</span>
-            </div>
-          </div>
           <div className="data-actions">
             <button className="secondary-button" type="button" onClick={() => downloadJson("xiaozhangben-backup.json", state)}>导出</button>
             <label className="secondary-button">
@@ -980,6 +937,7 @@ function ExpenseList({ items, onEdit, onDelete }) {
             <div>
               <strong>{item.merchant}</strong>
               <span>{recordTypeLabels[item.type || "expense"]} · {category.name} · {item.method} · {item.date}</span>
+              {item.note && <em className="expense-note">{item.note}</em>}
             </div>
             <b>{signedMoney(item.amount, item.type)}</b>
             <button type="button" className="row-icon" aria-label="编辑" onClick={() => onEdit(item)}>
@@ -1223,6 +1181,19 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
   };
 }
 
+function sortRecordsByDateTime(records) {
+  return records
+    .slice()
+    .sort((a, b) => getRecordTimeValue(b) - getRecordTimeValue(a));
+}
+
+function getRecordTimeValue(record) {
+  const date = record?.date || "1970-01-01";
+  const time = record?.time || "00:00";
+  const value = new Date(`${date}T${time}`).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
+
 function buildConic(items) {
   if (!items.length) return "conic-gradient(var(--line), var(--line))";
   let cursor = 0;
@@ -1318,14 +1289,16 @@ function shiftMonth(value, offset) {
 }
 
 function money(value) {
-  return `¥${Number(value || 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: Number(value || 0) % 1 ? 2 : 0,
+  const number = Number(value || 0);
+  const absolute = Math.abs(number);
+  return `${number < 0 ? "-" : ""}¥${absolute.toLocaleString("zh-CN", {
+    minimumFractionDigits: absolute % 1 ? 2 : 0,
     maximumFractionDigits: 2
   })}`;
 }
 
 function signedMoney(value, type = "expense") {
-  return `${type === "income" ? "+" : "-"}${money(value)}`;
+  return `${type === "income" ? "+" : "-"}${money(Math.abs(Number(value || 0)))}`;
 }
 
 function getCategory(categoryId, type = "expense") {
