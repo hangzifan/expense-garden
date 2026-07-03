@@ -77,9 +77,43 @@ function normalizeEntry(entry) {
 export function saveState(state) {
   const serialized = JSON.stringify(state);
   const current = localStorage.getItem(STORE_KEY);
-  if (current) localStorage.setItem(STORE_PREVIOUS_KEY, current);
-  localStorage.setItem(STORE_BACKUP_KEY, serialized);
-  localStorage.setItem(STORE_KEY, serialized);
+
+  try {
+    if (current) localStorage.setItem(STORE_PREVIOUS_KEY, current);
+  } catch {
+    removeStoredItem(STORE_PREVIOUS_KEY);
+  }
+
+  try {
+    localStorage.setItem(STORE_BACKUP_KEY, serialized);
+  } catch {
+    removeStoredItem(STORE_PREVIOUS_KEY);
+    try {
+      localStorage.setItem(STORE_BACKUP_KEY, serialized);
+    } catch {
+      removeStoredItem(STORE_BACKUP_KEY);
+    }
+  }
+
+  try {
+    localStorage.setItem(STORE_KEY, serialized);
+  } catch {
+    removeStoredItem(STORE_PREVIOUS_KEY);
+    removeStoredItem(STORE_BACKUP_KEY);
+    try {
+      localStorage.setItem(STORE_KEY, serialized);
+    } catch {
+      // Avoid crashing the UI if the browser storage quota is exhausted.
+    }
+  }
+}
+
+function removeStoredItem(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage may be unavailable in rare WebView states.
+  }
 }
 
 export function downloadJson(filename, data) {

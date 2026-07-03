@@ -9,7 +9,6 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.IOException;
-import org.json.JSONException;
 
 @CapacitorPlugin(name = "XzbNotify")
 public class XzbNotifyPlugin extends Plugin {
@@ -37,7 +36,7 @@ public class XzbNotifyPlugin extends Plugin {
             JSObject ret = new JSObject();
             ret.put("items", XzbNotificationStore.drain(getContext()));
             call.resolve(ret);
-        } catch (IOException | JSONException error) {
+        } catch (IOException error) {
             call.reject("读取通知账单失败", error);
         }
     }

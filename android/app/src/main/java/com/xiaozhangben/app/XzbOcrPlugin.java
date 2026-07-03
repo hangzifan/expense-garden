@@ -87,7 +87,7 @@ public class XzbOcrPlugin extends Plugin {
                 call.reject("无法读取图片内容");
                 return;
             }
-            processImage(call, InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0), null);
+            processBitmap(call, bitmap, null);
         } catch (IllegalArgumentException error) {
             call.reject("图片格式不正确", error);
         }
@@ -108,7 +108,7 @@ public class XzbOcrPlugin extends Plugin {
         Uri uri = data.getData();
         try {
             Bitmap bitmap = decodeUriBitmap(uri);
-            processImage(call, InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0), uri.toString());
+            processBitmap(call, bitmap, uri.toString());
         } catch (IOException error) {
             call.reject("读取图片失败", error);
         }
@@ -217,6 +217,34 @@ public class XzbOcrPlugin extends Plugin {
             });
     }
 
+    private void processBitmap(PluginCall call, Bitmap bitmap, String uri) {
+        TextRecognizer recognizer = TextRecognition.getClient(
+            new ChineseTextRecognizerOptions.Builder().build()
+        );
+        Bitmap ocrBitmap = prepareBitmapForOcr(bitmap);
+        if (ocrBitmap != bitmap) {
+            safeRecycle(bitmap);
+        }
+        InputImage image = InputImage.fromBitmap(ocrBitmap, 0);
+
+        recognizer.process(image)
+            .addOnSuccessListener(text -> {
+                JSObject ret = new JSObject();
+                ret.put("text", text.getText());
+                if (uri != null) {
+                    ret.put("uri", uri);
+                }
+                call.resolve(ret);
+                safeRecycle(ocrBitmap);
+                recognizer.close();
+            })
+            .addOnFailureListener(error -> {
+                call.reject("OCR 识别失败", error);
+                safeRecycle(ocrBitmap);
+                recognizer.close();
+            });
+    }
+
     private byte[] readUriBytes(Uri uri) throws IOException {
         try (InputStream input = getContext().getContentResolver().openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -259,13 +287,18 @@ public class XzbOcrPlugin extends Plugin {
         Uri uri = uris.get(index);
         try {
             Bitmap bitmap = decodeUriBitmap(uri);
-            InputImage image = InputImage.fromBitmap(prepareBitmapForOcr(bitmap), 0);
+            Bitmap ocrBitmap = prepareBitmapForOcr(bitmap);
+            if (ocrBitmap != bitmap) {
+                safeRecycle(bitmap);
+            }
+            InputImage image = InputImage.fromBitmap(ocrBitmap, 0);
             recognizer.process(image)
                 .addOnSuccessListener(text -> {
                     JSObject item = new JSObject();
                     item.put("uri", uri.toString());
                     item.put("text", text.getText());
                     results.put(item);
+                    safeRecycle(ocrBitmap);
                     recognizeUriAt(call, recognizer, uris, index + 1, results);
                 })
                 .addOnFailureListener(error -> {
@@ -274,6 +307,7 @@ public class XzbOcrPlugin extends Plugin {
                     item.put("text", "");
                     item.put("error", error.getMessage());
                     results.put(item);
+                    safeRecycle(ocrBitmap);
                     recognizeUriAt(call, recognizer, uris, index + 1, results);
                 });
         } catch (IOException error) {
@@ -338,7 +372,11 @@ public class XzbOcrPlugin extends Plugin {
             scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true);
         }
 
-        return enhanceBitmapForOcr(scaled);
+        Bitmap enhanced = enhanceBitmapForOcr(scaled);
+        if (enhanced != scaled && scaled != bitmap) {
+            safeRecycle(scaled);
+        }
+        return enhanced;
     }
 
     private Bitmap enhanceBitmapForOcr(Bitmap bitmap) {
@@ -366,5 +404,11 @@ public class XzbOcrPlugin extends Plugin {
 
     private int clamp(int value) {
         return Math.max(0, Math.min(255, value));
+    }
+
+    private void safeRecycle(Bitmap bitmap) {
+        if (bitmap != null && !bitmap.isRecycled()) {
+            bitmap.recycle();
+        }
     }
 }

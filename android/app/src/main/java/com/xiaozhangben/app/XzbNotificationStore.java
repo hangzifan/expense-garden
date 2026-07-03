@@ -15,6 +15,7 @@ import org.json.JSONObject;
 
 final class XzbNotificationStore {
     private static final String QUEUE_DIR = "notification_queue";
+    private static final int MAX_QUEUE_FILES = 200;
 
     private XzbNotificationStore() {}
 
@@ -34,9 +35,10 @@ final class XzbNotificationStore {
             tempFile.delete();
             throw new IOException("Unable to commit notification entry");
         }
+        pruneQueue(dir);
     }
 
-    static JSONArray drain(Context context) throws IOException, JSONException {
+    static JSONArray drain(Context context) throws IOException {
         File dir = getQueueDir(context);
         File[] files = dir.listFiles((file, name) -> name.endsWith(".json"));
         JSONArray items = new JSONArray();
@@ -46,11 +48,35 @@ final class XzbNotificationStore {
 
         Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
         for (File file : files) {
-            String raw = readFile(file);
-            items.put(new JSONObject(raw));
-            file.delete();
+            try {
+                String raw = readFile(file);
+                items.put(new JSONObject(raw));
+                file.delete();
+            } catch (JSONException | IOException error) {
+                quarantineFile(file);
+            }
         }
         return items;
+    }
+
+    private static void pruneQueue(File dir) {
+        File[] files = dir.listFiles((file, name) -> name.endsWith(".json"));
+        if (files == null || files.length <= MAX_QUEUE_FILES) {
+            return;
+        }
+
+        Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+        int removeCount = files.length - MAX_QUEUE_FILES;
+        for (int i = 0; i < removeCount; i++) {
+            files[i].delete();
+        }
+    }
+
+    private static void quarantineFile(File file) {
+        File badFile = new File(file.getParentFile(), file.getName() + ".bad");
+        if (!file.renameTo(badFile)) {
+            file.delete();
+        }
     }
 
     private static File getQueueDir(Context context) throws IOException {
