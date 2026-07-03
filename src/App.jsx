@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
-import { parseExpenseText, suggestCategory } from "./parser.js";
+import { parseExpenseText } from "./parser.js";
 import {
   ChartIcon,
   CheckIcon,

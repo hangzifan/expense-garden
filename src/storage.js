@@ -1,4 +1,4 @@
-import { coverPresets, seedExpenses, seedPending, themes } from "./data.js";
+import { coverPresets, themes } from "./data.js";
 
 const STORE_KEY = "expense-garden-state-v1";
 
@@ -15,8 +15,8 @@ export function loadState() {
 
 function createDefaultState() {
   return {
-    expenses: seedExpenses,
-    pending: seedPending,
+    expenses: [],
+    pending: [],
     settings: {
       budget: 3200,
       themeId: themes[0].id,
@@ -30,8 +30,8 @@ function createDefaultState() {
 function normalizeState(state) {
   const defaults = createDefaultState();
   return {
-    expenses: Array.isArray(state?.expenses) ? state.expenses.map(normalizeEntry) : defaults.expenses.map(normalizeEntry),
-    pending: Array.isArray(state?.pending) ? state.pending.map(normalizeEntry) : defaults.pending.map(normalizeEntry),
+    expenses: Array.isArray(state?.expenses) ? state.expenses.map(normalizeEntry) : defaults.expenses,
+    pending: Array.isArray(state?.pending) ? state.pending.map(normalizeEntry) : defaults.pending,
     settings: {
       ...defaults.settings,
       ...(state?.settings || {})
