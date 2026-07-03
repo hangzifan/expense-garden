@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import { categories, coverPresets, methods, themes } from "./data.js";
+import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
 import { parseExpenseText, suggestCategory } from "./parser.js";
 import {
@@ -25,8 +25,10 @@ const navItems = [
 ];
 
 const XzbOcr = registerPlugin("XzbOcr");
+const recordTypeLabels = { expense: "支出", income: "收入" };
 
 const emptyDraft = () => ({
+  type: "expense",
   amount: "",
   merchant: "",
   category: "food",
@@ -45,6 +47,7 @@ function App() {
   const [draft, setDraft] = useState(emptyDraft);
   const [editingId, setEditingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletePendingTarget, setDeletePendingTarget] = useState(null);
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
@@ -70,8 +73,11 @@ function App() {
   }, [theme, settings.darkMode]);
 
   function saveExpense(entry) {
+    const type = entry.type === "income" ? "income" : "expense";
     const normalized = {
       ...entry,
+      type,
+      category: entry.category || (type === "income" ? "income-other" : "other"),
       amount: Number(entry.amount),
       id: editingId || `expense-${Date.now()}`,
       source: entry.source || "手动"
@@ -88,8 +94,11 @@ function App() {
   }
 
   function confirmPending(entry) {
+    const type = entry.type === "income" ? "income" : "expense";
     const expense = {
       ...entry,
+      type,
+      category: entry.category || (type === "income" ? "income-other" : "other"),
       id: `expense-${Date.now()}`,
       amount: Number(entry.amount),
       note: entry.note || "",
@@ -100,10 +109,12 @@ function App() {
   }
 
   function editExpense(expense) {
+    const type = expense.type === "income" ? "income" : "expense";
     setDraft({
+      type,
       amount: String(expense.amount),
       merchant: expense.merchant,
-      category: expense.category,
+      category: expense.category || (type === "income" ? "income-other" : "other"),
       method: expense.method,
       date: expense.date,
       time: expense.time,
@@ -122,6 +133,12 @@ function App() {
     if (!deleteTarget) return;
     setExpenses((items) => items.filter((item) => item.id !== deleteTarget.id));
     setDeleteTarget(null);
+  }
+
+  function confirmDeletePending() {
+    if (!deletePendingTarget) return;
+    setPending((items) => items.filter((item) => item.id !== deletePendingTarget.id));
+    setDeletePendingTarget(null);
   }
 
   function addPending(entry) {
@@ -143,7 +160,7 @@ function App() {
             onMonthChange={setSelectedMonth}
             onTab={setActiveTab}
             onConfirm={confirmPending}
-            onDeletePending={(id) => setPending((items) => items.filter((item) => item.id !== id))}
+            onDeletePending={setDeletePendingTarget}
             onEdit={editExpense}
             onDelete={requestDeleteExpense}
           />
@@ -182,6 +199,13 @@ function App() {
             item={deleteTarget}
             onCancel={() => setDeleteTarget(null)}
             onConfirm={confirmDeleteExpense}
+          />
+        )}
+        {deletePendingTarget && (
+          <ConfirmDeleteModal
+            item={deletePendingTarget}
+            onCancel={() => setDeletePendingTarget(null)}
+            onConfirm={confirmDeletePending}
           />
         )}
         <BottomNav activeTab={activeTab} onTab={setActiveTab} />
@@ -240,6 +264,10 @@ function HomeScreen({
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
               </div>
+              <div className="balance-row">
+                <span>收入 {money(stats.incomeTotal)}</span>
+                <span>结余 {money(stats.balance)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -274,7 +302,7 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
   return (
     <Screen>
       <header className="screen-heading">
-        <p>{editingId ? "编辑消费" : "每日消费"}</p>
+        <p>{editingId ? "编辑记录" : "每日收支"}</p>
         <h2>{editingId ? "调整这一笔" : "记一笔"}</h2>
       </header>
 
@@ -282,6 +310,17 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
         event.preventDefault();
         onSave(draft);
       }}>
+        <Field label="类型">
+          <TypeToggle
+            value={draft.type}
+            onChange={(type) => setDraft({
+              ...draft,
+              type,
+              category: type === "income" ? "salary" : "food"
+            })}
+          />
+        </Field>
+
         <label className="amount-input">
           <span>金额</span>
           <input
@@ -298,12 +337,12 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
           <input
             value={draft.merchant}
             onChange={(event) => setDraft({ ...draft, merchant: event.target.value })}
-            placeholder="例如：咖啡店"
+            placeholder={draft.type === "income" ? "例如：工资、退款" : "例如：咖啡店"}
           />
         </Field>
 
         <Field label="分类">
-          <CategoryGrid value={draft.category} onChange={(category) => setDraft({ ...draft, category })} />
+          <CategoryGrid type={draft.type} value={draft.category} onChange={(category) => setDraft({ ...draft, category })} />
         </Field>
 
         <div className="two-columns">
@@ -344,25 +383,57 @@ function ScanScreen({ onPending }) {
   const [notificationText, setNotificationText] = useState("");
   const [candidate, setCandidate] = useState(null);
   const [preview, setPreview] = useState("");
+  const [selectedImageDataUrl, setSelectedImageDataUrl] = useState("");
+  const [ocrCrop, setOcrCrop] = useState({ x: 50, y: 50, zoom: 1 });
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
   const [notificationNotice, setNotificationNotice] = useState("");
+  const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
   async function pickImageWithNativeOcr() {
     setCandidate(null);
     setRawText("");
     setPreview("");
+    setSelectedImageDataUrl("");
+    setOcrCrop({ x: 50, y: 50, zoom: 1 });
     setImageNotice("");
 
-    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
+    if (!canUseNativeOcr) {
       setStatus("需要安卓安装包");
-      setImageNotice("请在手机安装包里使用系统选图识别；网页预览只能手动粘贴文字识别。");
+      setImageNotice("请在手机安装包里使用系统选图；网页预览可用下方虚线框选择图片。");
       return;
     }
 
     setStatus("正在打开相册");
     try {
-      const result = await XzbOcr.pickImageAndRecognize();
+      const result = await XzbOcr.pickImage();
+      const dataUrl = String(result?.dataUrl || "");
+      if (!dataUrl) {
+        setStatus("读取失败");
+        setImageNotice("没有读到图片内容，请重新选择。");
+        return;
+      }
+      setPreview(dataUrl);
+      setSelectedImageDataUrl(dataUrl);
+      setStatus("请裁剪后识别");
+      setImageNotice("调整裁剪区域后，点击识别裁剪区域。");
+    } catch (error) {
+      setStatus("等待截图");
+      setImageNotice(error?.message || "没有选择图片。");
+    }
+  }
+
+  async function recognizeImageDataUrl(dataUrl) {
+    if (!canUseNativeOcr) {
+      setStatus("需要安卓安装包");
+      setImageNotice("请在手机安装包里使用截图 OCR；网页预览只能手动粘贴文字识别。");
+      return;
+    }
+
+    setStatus("正在识别截图");
+    setImageNotice("");
+    try {
+      const result = await XzbOcr.recognizeImage({ dataUrl });
       const text = String(result?.text || "").trim();
       setRawText(text);
 
@@ -375,18 +446,25 @@ function ScanScreen({ onPending }) {
       setStatus("已读取文字");
       recognizeFromText(text, "截图识别");
     } catch (error) {
-      setStatus("等待截图");
-      setImageNotice(error?.message || "没有选择图片。");
+      setStatus("识别失败");
+      setImageNotice(error?.message || "OCR 识别失败，请换一张更清晰的截图。");
     }
   }
 
   async function handleImage(file) {
     if (!file) return;
-    setPreview(await readFileAsDataUrl(file));
+    const dataUrl = await readFileAsDataUrl(file);
+    setPreview(dataUrl);
+    setSelectedImageDataUrl(dataUrl);
+    setOcrCrop({ x: 50, y: 50, zoom: 1 });
     setRawText("");
     setCandidate(null);
-    setStatus("正在读取文字");
-    setImageNotice("");
+    setStatus("请裁剪后识别");
+    setImageNotice("调整裁剪区域后，点击识别裁剪区域。");
+
+    if (canUseNativeOcr) {
+      return;
+    }
 
     if ("TextDetector" in window) {
       try {
@@ -405,6 +483,21 @@ function ScanScreen({ onPending }) {
       setStatus("已导入，等待文字");
       setImageNotice("网页备用导入只能预览截图；手机安装包请用上方系统选图识别。");
     }
+  }
+
+  async function recognizeScreenshot() {
+    if (selectedImageDataUrl) {
+      const croppedImage = await cropOcrImage(selectedImageDataUrl, ocrCrop);
+      await recognizeImageDataUrl(croppedImage);
+      return;
+    }
+
+    if (rawText.trim()) {
+      recognizeFromText(rawText, "截图识别");
+      return;
+    }
+
+    recognizeFromText(rawText, "截图识别");
   }
 
   function recognizeFromText(text, source) {
@@ -437,6 +530,7 @@ function ScanScreen({ onPending }) {
     setCandidate(null);
     setRawText("");
     setNotificationText("");
+    setSelectedImageDataUrl("");
     setStatus("等待截图");
     setImageNotice("");
     setNotificationNotice("");
@@ -459,6 +553,9 @@ function ScanScreen({ onPending }) {
           {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
           <span>{status}</span>
         </label>
+        {selectedImageDataUrl && (
+          <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={setOcrCrop} />
+        )}
         <textarea
           value={rawText}
           onChange={(event) => setRawText(event.target.value)}
@@ -467,9 +564,9 @@ function ScanScreen({ onPending }) {
         <div className="sample-row">
           <button type="button" onClick={() => setRawText("支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32")}>截图样例</button>
         </div>
-        <button className="primary-button full" type="button" onClick={() => recognizeFromText(rawText, "截图识别")}>
+        <button className="primary-button full" type="button" onClick={recognizeScreenshot}>
           <ScanIcon />
-          开始识别
+          {selectedImageDataUrl ? "识别裁剪区域" : "开始识别"}
         </button>
         {imageNotice && <p className="scan-feedback">{imageNotice}</p>}
       </div>
@@ -519,15 +616,34 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
       <div className="candidate-head">
         <div>
           <span>{candidate.source}</span>
-          <strong>{money(candidate.amount)}</strong>
+          <strong>{signedMoney(candidate.amount, candidate.type)}</strong>
         </div>
         <b>{candidate.confidence}%</b>
       </div>
+      <Field label="类型">
+        <TypeToggle
+          value={candidate.type || "expense"}
+          onChange={(type) => setCandidate({
+            ...candidate,
+            type,
+            category: type === "income" ? "salary" : "food"
+          })}
+        />
+      </Field>
+      <Field label="金额">
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={candidate.amount}
+          onChange={(event) => setCandidate({ ...candidate, amount: event.target.value })}
+        />
+      </Field>
       <Field label="商户">
         <input value={candidate.merchant} onChange={(event) => setCandidate({ ...candidate, merchant: event.target.value })} />
       </Field>
       <Field label="分类">
-        <CategoryGrid value={candidate.category} onChange={(category) => setCandidate({ ...candidate, category })} />
+        <CategoryGrid type={candidate.type} value={candidate.category} onChange={(category) => setCandidate({ ...candidate, category })} />
       </Field>
       <div className="two-columns">
         <Field label="日期">
@@ -543,6 +659,33 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
           <CheckIcon />
           确认入账
         </button>
+      </div>
+    </section>
+  );
+}
+
+function ScreenshotCropPanel({ crop, image, onCropChange }) {
+  const updateCrop = (key, value) => {
+    onCropChange({ ...crop, [key]: Number(value) });
+  };
+
+  return (
+    <section className="ocr-crop-panel">
+      <div className="ocr-crop-stage">
+        <img
+          alt=""
+          src={image}
+          style={{
+            objectPosition: `${crop.x}% ${crop.y}%`,
+            transform: `scale(${crop.zoom})`
+          }}
+        />
+        <span>裁剪区域</span>
+      </div>
+      <div className="crop-controls">
+        <CropSlider label="横向" max="100" min="0" step="1" value={crop.x} onChange={(value) => updateCrop("x", value)} />
+        <CropSlider label="纵向" max="100" min="0" step="1" value={crop.y} onChange={(value) => updateCrop("y", value)} />
+        <CropSlider label="缩放" max="2.8" min="1" step="0.01" value={crop.zoom} onChange={(value) => updateCrop("zoom", value)} />
       </div>
     </section>
   );
@@ -564,12 +707,12 @@ function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, on
           <strong>{money(stats.total)}</strong>
         </div>
         <div>
-          <span>日均</span>
-          <strong>{money(stats.dailyAverage)}</strong>
+          <span>本月收入</span>
+          <strong>{money(stats.incomeTotal)}</strong>
         </div>
         <div>
-          <span>剩余预算</span>
-          <strong>{money(Math.max(budget - stats.total, 0))}</strong>
+          <span>本月结余</span>
+          <strong>{money(stats.balance)}</strong>
         </div>
       </section>
 
@@ -596,11 +739,11 @@ function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, on
         </div>
       </section>
 
-      <SectionTitle title="消费洞察" aside={`${expenses.length} 笔`} />
+      <SectionTitle title="收支洞察" aside={`${expenses.length} 笔`} />
       <div className="insight-list">
-        <Insight text={stats.topCategory ? `${stats.topCategory.name} 是本月最高分类` : "本月还没有消费记录"} />
+        <Insight text={stats.topCategory ? `${stats.topCategory.name} 是本月最高支出分类` : "本月还没有支出记录"} />
         <Insight text={stats.maxExpense ? `最大单笔是 ${stats.maxExpense.merchant}` : "开始记第一笔后生成洞察"} />
-        <Insight text={stats.usedRate > 85 ? "预算使用偏快" : "预算节奏稳定"} />
+        <Insight text={stats.incomeTotal ? `本月收入 ${money(stats.incomeTotal)}，结余 ${money(stats.balance)}` : "收入记录会显示在结余里"} />
       </div>
 
       <SectionTitle title="月度账单" aside={`${expenses.length} 笔`} />
@@ -806,13 +949,13 @@ function PendingCard({ item, onConfirm, onDelete }) {
       <div className="expense-main">
         <div>
           <strong>{local.merchant}</strong>
-          <span>{local.source} · {local.date} {local.time}</span>
+          <span>{recordTypeLabels[local.type || "expense"]} · {local.source} · {local.date} {local.time}</span>
         </div>
-        <b>{money(local.amount)}</b>
+        <b className={local.type === "income" ? "income-amount" : ""}>{signedMoney(local.amount, local.type)}</b>
       </div>
-      <CategoryGrid compact value={local.category} onChange={(category) => setLocal({ ...local, category })} />
+      <CategoryGrid compact type={local.type} value={local.category} onChange={(category) => setLocal({ ...local, category })} />
       <div className="pending-actions">
-        <button type="button" className="ghost-button" onClick={() => onDelete(item.id)}>
+        <button type="button" className="ghost-button" onClick={() => onDelete(item)}>
           <TrashIcon />
         </button>
         <button type="button" className="primary-button small" onClick={() => onConfirm(local)}>
@@ -830,15 +973,15 @@ function ExpenseList({ items, onEdit, onDelete }) {
   return (
     <div className="expense-list">
       {items.map((item) => {
-        const category = categories.find((entry) => entry.id === item.category) || categories.at(-1);
+        const category = getCategory(item.category, item.type);
         return (
-          <article className="expense-row" key={item.id}>
+          <article className={item.type === "income" ? "expense-row income-row" : "expense-row"} key={item.id}>
             <i style={{ background: category.color }} />
             <div>
               <strong>{item.merchant}</strong>
-              <span>{category.name} · {item.method} · {item.date}</span>
+              <span>{recordTypeLabels[item.type || "expense"]} · {category.name} · {item.method} · {item.date}</span>
             </div>
-            <b>{money(item.amount)}</b>
+            <b>{signedMoney(item.amount, item.type)}</b>
             <button type="button" className="row-icon" aria-label="编辑" onClick={() => onEdit(item)}>
               <EditIcon />
             </button>
@@ -880,7 +1023,7 @@ function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
         <div>
           <span>删除记录</span>
           <h3>确定删除这一笔吗？</h3>
-          <p>{item.merchant} · {money(item.amount)}</p>
+          <p>{item.merchant} · {signedMoney(item.amount, item.type)}</p>
         </div>
         <div className="confirm-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
@@ -956,10 +1099,28 @@ function SegmentedControl({ value, options, onChange }) {
   );
 }
 
-function CategoryGrid({ value, onChange, compact = false }) {
+function TypeToggle({ value, onChange }) {
+  return (
+    <div className="type-toggle">
+      {["expense", "income"].map((type) => (
+        <button
+          key={type}
+          type="button"
+          className={value === type ? "selected" : ""}
+          onClick={() => onChange(type)}
+        >
+          {recordTypeLabels[type]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
+  const categorySource = type === "income" ? incomeCategories : categories;
   return (
     <div className={compact ? "category-grid compact" : "category-grid"}>
-      {categories.map((category) => (
+      {categorySource.map((category) => (
         <button
           key={category.id}
           type="button"
@@ -1012,14 +1173,17 @@ function EmptyLine({ text }) {
 }
 
 function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
-  const total = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const expenseItems = expenses.filter((item) => item.type !== "income");
+  const incomeItems = expenses.filter((item) => item.type === "income");
+  const total = expenseItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const incomeTotal = incomeItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const currentMonth = today().slice(0, 7);
   const todayTotal = month === currentMonth
-    ? expenses.filter((item) => item.date === today()).reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    ? expenseItems.filter((item) => item.date === today()).reduce((sum, item) => sum + Number(item.amount || 0), 0)
     : 0;
   const categoryTotals = categories
     .map((category) => {
-      const categoryTotal = expenses
+      const categoryTotal = expenseItems
         .filter((item) => item.category === category.id)
         .reduce((sum, item) => sum + Number(item.amount || 0), 0);
       return {
@@ -1039,19 +1203,22 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
     const date = `${year}-${pad(monthNumber)}-${pad(index + 1)}`;
     return {
       date,
-      total: expenses.filter((item) => item.date === date).reduce((sum, item) => sum + Number(item.amount || 0), 0)
+      total: expenseItems.filter((item) => item.date === date).reduce((sum, item) => sum + Number(item.amount || 0), 0)
     };
   });
 
   return {
     total,
+    incomeTotal,
+    balance: incomeTotal - total,
     budget,
     todayTotal,
     usedRate: budget ? (total / budget) * 100 : 0,
     dailyAverage: days.length ? total / days.length : 0,
     categoryTotals,
     topCategory: categoryTotals[0],
-    maxExpense: expenses.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
+    maxExpense: expenseItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
+    maxIncome: incomeItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
     days
   };
 }
@@ -1089,6 +1256,30 @@ async function cropCoverImage(src, crop) {
   context.drawImage(image, dx, dy, drawWidth, drawHeight);
 
   return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+async function cropOcrImage(src, crop) {
+  const image = await loadImage(src);
+  const outputWidth = 1080;
+  const outputHeight = 1920;
+  const canvas = document.createElement("canvas");
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+
+  const context = canvas.getContext("2d");
+  const scale = Math.max(outputWidth / image.naturalWidth, outputHeight / image.naturalHeight) * crop.zoom;
+  const drawWidth = image.naturalWidth * scale;
+  const drawHeight = image.naturalHeight * scale;
+  const overflowX = Math.max(0, drawWidth - outputWidth);
+  const overflowY = Math.max(0, drawHeight - outputHeight);
+  const dx = -overflowX * (crop.x / 100);
+  const dy = -overflowY * (crop.y / 100);
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, outputWidth, outputHeight);
+  context.drawImage(image, dx, dy, drawWidth, drawHeight);
+
+  return canvas.toDataURL("image/jpeg", 0.92);
 }
 
 function loadImage(src) {
@@ -1131,6 +1322,15 @@ function money(value) {
     minimumFractionDigits: Number(value || 0) % 1 ? 2 : 0,
     maximumFractionDigits: 2
   })}`;
+}
+
+function signedMoney(value, type = "expense") {
+  return `${type === "income" ? "+" : "-"}${money(value)}`;
+}
+
+function getCategory(categoryId, type = "expense") {
+  const source = type === "income" ? incomeCategories : categories;
+  return source.find((entry) => entry.id === categoryId) || source.at(-1);
 }
 
 function today() {

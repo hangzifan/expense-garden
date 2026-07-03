@@ -1,4 +1,4 @@
-import { categories } from "./data.js";
+import { categories, incomeCategories } from "./data.js";
 
 const amountRegexes = [
   /(?:￥|¥)\s*([0-9]+(?:\.[0-9]{1,2})?)/i,
@@ -22,17 +22,19 @@ export function parseExpenseText(rawText) {
 
   const amount = extractAmount(compact);
   const { date, time } = extractDateTime(compact);
-  const source = /支付宝|alipay/i.test(raw)
+  const source = /支付宝|alipay|花呗|余额宝/i.test(raw)
     ? "支付宝"
-    : /微信|wechat|weixin/i.test(raw)
+    : /微信|wechat|weixin|零钱|零钱通/i.test(raw)
       ? "微信"
       : "其他";
   const merchant = extractMerchant(compact, lines);
-  const category = suggestCategory(merchant + " " + raw);
+  const type = detectRecordType(raw);
+  const category = suggestCategory(merchant + " " + raw, type);
   const confidence = scoreConfidence({ amount, merchant, date, time, source });
 
   return {
     id: `pending-${Date.now()}`,
+    type,
     amount,
     merchant,
     category,
@@ -45,12 +47,20 @@ export function parseExpenseText(rawText) {
   };
 }
 
-export function suggestCategory(text) {
+export function suggestCategory(text, type = "expense") {
   const haystack = String(text || "").toLowerCase();
-  const matched = categories.find((category) =>
+  const source = type === "income" ? incomeCategories : categories;
+  const matched = source.find((category) =>
     category.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()))
   );
-  return matched?.id || "other";
+  return matched?.id || (type === "income" ? "income-other" : "other");
+}
+
+function detectRecordType(text) {
+  if (/收款成功|已收款|收到转账|转入|入账|到账|工资|薪资|薪水|奖金|退款|退回|返现|理财收益|利息/i.test(text)) {
+    return "income";
+  }
+  return "expense";
 }
 
 function extractAmount(text) {
@@ -69,24 +79,64 @@ function extractDateTime(text) {
   const now = new Date();
   const defaultDate = formatDate(now);
   const defaultTime = now.toTimeString().slice(0, 5);
+  const relativeDate = extractRelativeDate(text, now);
 
   for (const regex of dateRegexes) {
     const match = text.match(regex);
     if (!match) continue;
     if (match[1].length === 4) {
+      if (!isValidMonthDay(match[2], match[3])) continue;
       return {
         date: `${match[1]}-${pad(match[2])}-${pad(match[3])}`,
         time: match[4] || defaultTime
       };
     }
+    if (!isValidMonthDay(match[1], match[2])) continue;
     return {
       date: `${now.getFullYear()}-${pad(match[1])}-${pad(match[2])}`,
       time: match[3] || defaultTime
     };
   }
 
+  const time = extractTime(text) || defaultTime;
+  return { date: relativeDate || defaultDate, time };
+}
+
+function extractRelativeDate(text, now) {
+  const date = new Date(now);
+  if (/前天/.test(text)) {
+    date.setDate(date.getDate() - 2);
+    return formatDate(date);
+  }
+  if (/昨天/.test(text)) {
+    date.setDate(date.getDate() - 1);
+    return formatDate(date);
+  }
+  if (/今天/.test(text)) {
+    return formatDate(date);
+  }
+  return "";
+}
+
+function isValidMonthDay(month, day) {
+  const parsedMonth = Number.parseInt(month, 10);
+  const parsedDay = Number.parseInt(day, 10);
+  return parsedMonth >= 1 && parsedMonth <= 12 && parsedDay >= 1 && parsedDay <= 31;
+}
+
+function extractTime(text) {
+  const meridiemMatch = text.match(/(凌晨|早上|上午|中午|下午|晚上)?\s*([0-9]{1,2})[:：点]([0-5][0-9])?/);
+  if (meridiemMatch) {
+    const period = meridiemMatch[1] || "";
+    let hour = Number.parseInt(meridiemMatch[2], 10);
+    const minute = meridiemMatch[3] || "00";
+    if (/下午|晚上/.test(period) && hour < 12) hour += 12;
+    if (/凌晨|早上|上午/.test(period) && hour === 12) hour = 0;
+    return `${pad(hour)}:${minute}`;
+  }
+
   const timeMatch = text.match(/([01]?[0-9]|2[0-3]):[0-5][0-9]/);
-  return { date: defaultDate, time: timeMatch?.[0] || defaultTime };
+  return timeMatch?.[0] || "";
 }
 
 function extractMerchant(text, lines) {
@@ -102,7 +152,7 @@ function extractMerchant(text, lines) {
   }
 
   const usefulLine = lines.find((line) => {
-    if (/付款成功|支付成功|交易成功|微信|支付宝|￥|¥|金额|订单|单号|时间|账单|银行卡|余额/.test(line)) return false;
+    if (/付款成功|支付成功|交易成功|微信|支付宝|￥|¥|金额|订单|单号|时间|账单|账单详情|银行卡|余额|零钱|使用.*支付|上午|下午|晚上|昨天|今天|前天/.test(line)) return false;
     return line.length >= 2 && line.length <= 18;
   });
 
@@ -112,6 +162,7 @@ function extractMerchant(text, lines) {
 function cleanMerchant(value) {
   return String(value || "")
     .replace(/(付款|支付|成功|消费|收款|账单|截图|OCR|微信支付|支付宝|商户名称|商户|交易对象)/g, "")
+    .replace(/(使用|零钱支付|账单详情)/g, "")
     .replace(/[：:，,。]/g, "")
     .trim()
     .slice(0, 18) || "未识别商户";

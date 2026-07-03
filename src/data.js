@@ -9,6 +9,15 @@ export const categories = [
   { id: "other", name: "其他", color: "#7b837d", keywords: [] }
 ];
 
+export const incomeCategories = [
+  { id: "salary", name: "工资", color: "#4f9d75", keywords: ["工资", "薪资", "薪水", "奖金", "绩效"] },
+  { id: "bonus", name: "奖金", color: "#d6a94f", keywords: ["奖金", "红包", "奖励"] },
+  { id: "finance", name: "理财", color: "#5f8fb7", keywords: ["理财", "利息", "收益", "分红"] },
+  { id: "refund", name: "退款", color: "#63a889", keywords: ["退款", "退回", "返现"] },
+  { id: "transfer", name: "转账", color: "#9a7ac2", keywords: ["转账", "收款", "入账"] },
+  { id: "income-other", name: "其他", color: "#7b837d", keywords: [] }
+];
+
 export const methods = ["微信", "支付宝", "银行卡", "现金", "其他"];
 
 export const themes = [

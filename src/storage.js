@@ -30,12 +30,21 @@ function createDefaultState() {
 function normalizeState(state) {
   const defaults = createDefaultState();
   return {
-    expenses: Array.isArray(state?.expenses) ? state.expenses : defaults.expenses,
-    pending: Array.isArray(state?.pending) ? state.pending : defaults.pending,
+    expenses: Array.isArray(state?.expenses) ? state.expenses.map(normalizeEntry) : defaults.expenses.map(normalizeEntry),
+    pending: Array.isArray(state?.pending) ? state.pending.map(normalizeEntry) : defaults.pending.map(normalizeEntry),
     settings: {
       ...defaults.settings,
       ...(state?.settings || {})
     }
+  };
+}
+
+function normalizeEntry(entry) {
+  const type = entry?.type === "income" ? "income" : "expense";
+  return {
+    ...entry,
+    type,
+    category: entry?.category || (type === "income" ? "income-other" : "other")
   };
 }
 
