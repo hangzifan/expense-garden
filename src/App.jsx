@@ -362,13 +362,15 @@ function HomeScreen({
         <div className="cover-panel" style={coverStyle}>
           <div className="cover-image-area" />
           <div className="cover-data-area">
-            <div className="cover-stat-main">
-              <span>{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
-              <strong>{money(stats.total)}</strong>
-            </div>
-            <div className="today-chip">
-              <span>{isCurrentMonth ? "今日" : "日均"}</span>
-              <b>{money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}</b>
+            <div className="cover-summary-row">
+              <div className="cover-stat-main">
+                <span>{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
+                <strong>{money(stats.total)}</strong>
+              </div>
+              <div className="today-chip">
+                <span>{isCurrentMonth ? "今日" : "日均"}</span>
+                <b>{money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}</b>
+              </div>
             </div>
             <div className="budget-block">
               <div className="budget-row">
@@ -380,7 +382,9 @@ function HomeScreen({
               </div>
               <div className="balance-row">
                 <span>收入 {money(stats.incomeTotal)}</span>
-                <span>结余 {money(stats.balance)}</span>
+                <span className={stats.balance < 0 ? "negative" : "positive"}>
+                  结余 {money(stats.balance)}
+                </span>
               </div>
             </div>
           </div>
