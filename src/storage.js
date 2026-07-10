@@ -48,7 +48,8 @@ function createDefaultState() {
       themeId: themes[0].id,
       coverPresetId: coverPresets[0].id,
       coverImage: "",
-      darkMode: false
+      darkMode: false,
+      customExpenseCategories: []
     }
   };
 }
@@ -60,7 +61,10 @@ function normalizeState(state) {
     pending: Array.isArray(state?.pending) ? state.pending.map(normalizeEntry) : defaults.pending,
     settings: {
       ...defaults.settings,
-      ...(state?.settings || {})
+      ...(state?.settings || {}),
+      customExpenseCategories: Array.isArray(state?.settings?.customExpenseCategories)
+        ? state.settings.customExpenseCategories.filter((category) => category?.id && category?.name)
+        : []
     }
   };
 }

@@ -1,21 +1,21 @@
 export const categories = [
-  { id: "food", name: "餐饮", color: "#ee775d", keywords: ["咖啡", "餐", "饭", "茶", "奶茶", "外卖", "食", "面", "星巴克", "瑞幸", "茶百道", "蜜雪", "喜茶", "霸王茶姬"] },
-  { id: "transport", name: "交通", color: "#5f9fcf", keywords: ["地铁", "公交", "打车", "滴滴", "高铁", "机票", "停车", "加油"] },
-  { id: "shopping", name: "购物", color: "#d6a94f", keywords: ["淘宝", "京东", "商场", "优衣库", "超市", "盒马", "便利店"] },
-  { id: "home", name: "用水", color: "#4d9fc5", keywords: ["水费", "自来水", "饮用水", "桶装水", "矿泉水", "水站"] },
-  { id: "fun", name: "娱乐", color: "#63a889", keywords: ["电影", "游戏", "会员", "演出", "酒吧", "KTV"] },
-  { id: "health", name: "医疗", color: "#d86d84", keywords: ["医院", "药", "体检", "诊所", "医保"] },
-  { id: "study", name: "学习", color: "#4f77b8", keywords: ["书", "课程", "培训", "文具", "知识"] },
-  { id: "other", name: "其他", color: "#7b837d", keywords: [] }
+  { id: "food", name: "餐饮", icon: "food", color: "#ee775d", keywords: ["咖啡", "餐", "饭", "茶", "奶茶", "外卖", "食", "面", "星巴克", "瑞幸", "茶百道", "蜜雪", "喜茶", "霸王茶姬"] },
+  { id: "transport", name: "交通", icon: "transport", color: "#5f9fcf", keywords: ["地铁", "公交", "打车", "滴滴", "高铁", "机票", "停车", "加油"] },
+  { id: "shopping", name: "购物", icon: "shopping", color: "#d6a94f", keywords: ["淘宝", "京东", "商场", "优衣库", "超市", "盒马", "便利店"] },
+  { id: "home", name: "用水", icon: "water", color: "#4d9fc5", keywords: ["水费", "自来水", "饮用水", "桶装水", "矿泉水", "水站"] },
+  { id: "fun", name: "娱乐", icon: "fun", color: "#63a889", keywords: ["电影", "游戏", "会员", "演出", "酒吧", "KTV"] },
+  { id: "health", name: "医疗", icon: "health", color: "#d86d84", keywords: ["医院", "药", "体检", "诊所", "医保"] },
+  { id: "study", name: "学习", icon: "study", color: "#4f77b8", keywords: ["书", "课程", "培训", "文具", "知识"] },
+  { id: "other", name: "其他", icon: "other", color: "#7b837d", keywords: [] }
 ];
 
 export const incomeCategories = [
-  { id: "salary", name: "工资", color: "#4f9d75", keywords: ["工资", "薪资", "薪水", "奖金", "绩效"] },
-  { id: "bonus", name: "奖金", color: "#d6a94f", keywords: ["奖金", "红包", "奖励"] },
-  { id: "finance", name: "理财", color: "#5f8fb7", keywords: ["理财", "利息", "收益", "分红"] },
-  { id: "refund", name: "退款", color: "#63a889", keywords: ["退款", "退回", "返现"] },
-  { id: "transfer", name: "转账", color: "#9a7ac2", keywords: ["转账", "收款", "入账"] },
-  { id: "income-other", name: "其他", color: "#7b837d", keywords: [] }
+  { id: "salary", name: "工资", icon: "gift", color: "#4f9d75", keywords: ["工资", "薪资", "薪水", "奖金", "绩效"] },
+  { id: "bonus", name: "奖金", icon: "gift", color: "#d6a94f", keywords: ["奖金", "红包", "奖励"] },
+  { id: "finance", name: "理财", icon: "tag", color: "#5f8fb7", keywords: ["理财", "利息", "收益", "分红"] },
+  { id: "refund", name: "退款", icon: "tag", color: "#63a889", keywords: ["退款", "退回", "返现"] },
+  { id: "transfer", name: "转账", icon: "travel", color: "#9a7ac2", keywords: ["转账", "收款", "入账"] },
+  { id: "income-other", name: "其他", icon: "other", color: "#7b837d", keywords: [] }
 ];
 
 export const methods = ["微信", "支付宝", "银行卡", "现金", "其他"];

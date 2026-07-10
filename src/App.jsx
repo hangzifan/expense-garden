@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
@@ -6,6 +6,7 @@ import { parseExpenseText } from "./parser.js";
 import { createId } from "./ids.js";
 import {
   ChartIcon,
+  CategoryIcon,
   CheckIcon,
   EditIcon,
   PlusIcon,
@@ -15,6 +16,8 @@ import {
   UserIcon,
   WalletIcon
 } from "./icons.jsx";
+
+const ExpenseCategoriesContext = React.createContext(categories);
 
 const navItems = [
   { id: "home", label: "首页", icon: WalletIcon },
@@ -28,6 +31,17 @@ const XzbOcr = registerPlugin("XzbOcr");
 const XzbNotify = registerPlugin("XzbNotify");
 const recordTypeLabels = { expense: "支出", income: "收入" };
 const defaultOcrCrop = { x: 4, y: 4, width: 92, height: 92 };
+const categoryIconOptions = [
+  { id: "tag", name: "标签" },
+  { id: "home", name: "居家" },
+  { id: "water", name: "用水" },
+  { id: "travel", name: "出行" },
+  { id: "gift", name: "礼物" },
+  { id: "fun", name: "娱乐" },
+  { id: "health", name: "健康" },
+  { id: "study", name: "学习" }
+];
+const categoryColors = ["#6f927d", "#4d9fc5", "#ee775d", "#d6a94f", "#d86d84", "#4f77b8", "#9a7ac2", "#7b837d"];
 
 const emptyDraft = () => ({
   type: "expense",
@@ -128,6 +142,10 @@ function App() {
   const canUseNativeNotify = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
+  const expenseCategories = useMemo(
+    () => mergeExpenseCategories(settings.customExpenseCategories),
+    [settings.customExpenseCategories]
+  );
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
   const currentMonth = today().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
@@ -136,8 +154,8 @@ function App() {
     [expenses, selectedMonth]
   );
   const stats = useMemo(
-    () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth),
-    [monthlyExpenses, settings.budget, selectedMonth]
+    () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth, expenseCategories),
+    [monthlyExpenses, settings.budget, selectedMonth, expenseCategories]
   );
 
   useEffect(() => {
@@ -261,6 +279,7 @@ function App() {
   }
 
   return (
+    <ExpenseCategoriesContext.Provider value={expenseCategories}>
     <div className="app-shell">
       <main className="phone-frame">
         {activeTab === "home" && (
@@ -325,6 +344,7 @@ function App() {
         <BottomNav activeTab={activeTab} onTab={setActiveTab} />
       </main>
     </div>
+    </ExpenseCategoriesContext.Provider>
   );
 }
 
@@ -1254,6 +1274,8 @@ function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, on
 function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }) {
   const [coverDraft, setCoverDraft] = useState(null);
   const [coverCrop, setCoverCrop] = useState({ x: 50, y: 50, zoom: 1 });
+  const [categoryDraft, setCategoryDraft] = useState({ name: "", icon: "tag", color: "#6f927d" });
+  const customCategories = settings.customExpenseCategories || [];
 
   async function uploadCover(file) {
     if (!file) return;
@@ -1276,6 +1298,34 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
     if (Array.isArray(imported.expenses)) setExpenses(imported.expenses);
     if (Array.isArray(imported.pending)) setPending(imported.pending);
     if (imported.settings) setSettings({ ...settings, ...imported.settings });
+  }
+
+  function addCustomCategory() {
+    const name = categoryDraft.name.trim().slice(0, 12);
+    if (!name) return;
+    const duplicate = mergeExpenseCategories(customCategories).some((category) => category.name === name);
+    if (duplicate) return;
+    const nextCategory = {
+      id: createId("category"),
+      name,
+      icon: categoryDraft.icon,
+      color: categoryDraft.color,
+      keywords: []
+    };
+    setSettings({
+      ...settings,
+      customExpenseCategories: [...customCategories, nextCategory]
+    });
+    setCategoryDraft({ name: "", icon: "tag", color: "#6f927d" });
+  }
+
+  function removeCustomCategory(category) {
+    setSettings({
+      ...settings,
+      customExpenseCategories: customCategories.filter((item) => item.id !== category.id)
+    });
+    setExpenses((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
+    setPending((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
   }
 
   return (
@@ -1331,6 +1381,80 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
             </button>
           ))}
         </div>
+
+        <SectionTitle title="消费分类" aside="自定义" />
+        <section className="settings-panel category-manager">
+          <div className="category-summary" aria-label="当前消费分类">
+            {mergeExpenseCategories(customCategories).map((category) => (
+              <span key={category.id}>
+                <i style={{ color: category.color }}><CategoryIcon name={category.icon} size={16} /></i>
+                {category.name}
+              </span>
+            ))}
+          </div>
+
+          <Field label="新分类名称">
+            <input
+              value={categoryDraft.name}
+              maxLength="12"
+              placeholder="例如：宠物"
+              onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })}
+            />
+          </Field>
+
+          <div className="category-designer">
+            <div>
+              <span>图标</span>
+              <div className="icon-picker">
+                {categoryIconOptions.map((icon) => (
+                  <button
+                    key={icon.id}
+                    type="button"
+                    className={categoryDraft.icon === icon.id ? "selected" : ""}
+                    title={icon.name}
+                    aria-label={icon.name}
+                    onClick={() => setCategoryDraft({ ...categoryDraft, icon: icon.id })}
+                  >
+                    <CategoryIcon name={icon.id} size={19} />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span>颜色</span>
+              <div className="color-picker">
+                {categoryColors.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={categoryDraft.color === color ? "selected" : ""}
+                    aria-label="选择分类颜色"
+                    style={{ background: color }}
+                    onClick={() => setCategoryDraft({ ...categoryDraft, color })}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <button className="primary-button full" type="button" disabled={!categoryDraft.name.trim()} onClick={addCustomCategory}>
+            <PlusIcon /> 添加分类
+          </button>
+
+          {customCategories.length > 0 && (
+            <div className="custom-category-list">
+              {customCategories.map((category) => (
+                <div key={category.id}>
+                  <span style={{ color: category.color }}><CategoryIcon name={category.icon} size={18} /></span>
+                  <b>{category.name}</b>
+                  <button type="button" className="ghost-button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category)}>
+                    <TrashIcon />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="settings-panel">
           <Field label="月预算">
@@ -1461,15 +1585,18 @@ function PendingCard({ item, onConfirm, onDelete }) {
 }
 
 function ExpenseList({ items, onEdit, onDelete }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
   if (!items.length) return <EmptyLine text="还没有记录" />;
 
   return (
     <div className="expense-list">
       {items.map((item) => {
-        const category = getCategory(item.category, item.type);
+        const category = getCategory(item.category, item.type, expenseCategories);
         return (
           <article className={item.type === "income" ? "expense-row income-row" : "expense-row"} key={item.id}>
-            <i style={{ background: category.color }} />
+            <span className="expense-category-icon" style={{ color: category.color }}>
+              <CategoryIcon name={category.icon} size={20} />
+            </span>
             <div>
               <strong>{item.merchant}</strong>
               <span>{recordTypeLabels[item.type || "expense"]} · {category.name} · {item.method} · {item.date}</span>
@@ -1611,7 +1738,8 @@ function TypeToggle({ value, onChange }) {
 }
 
 function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
-  const categorySource = type === "income" ? incomeCategories : categories;
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  const categorySource = type === "income" ? incomeCategories : expenseCategories;
   return (
     <div className={compact ? "category-grid compact" : "category-grid"}>
       {categorySource.map((category) => (
@@ -1621,7 +1749,9 @@ function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
           className={value === category.id ? "selected" : ""}
           onClick={() => onChange(category.id)}
         >
-          <i style={{ background: category.color }} />
+          <span className="category-icon" style={{ color: category.color }}>
+            <CategoryIcon name={category.icon} size={18} />
+          </span>
           <span>{category.name}</span>
         </button>
       ))}
@@ -1666,7 +1796,7 @@ function EmptyLine({ text }) {
   return <p className="empty-line">{text}</p>;
 }
 
-function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
+function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCategories = categories) {
   // Older records did not have a type; they are historical expense records.
   const expenseItems = expenses.filter((item) => !item.type || item.type === "expense");
   const incomeItems = expenses.filter((item) => item.type === "income");
@@ -1676,7 +1806,7 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
   const todayTotal = month === currentMonth
     ? expenseItems.filter((item) => item.date === today()).reduce((sum, item) => sum + Number(item.amount || 0), 0)
     : 0;
-  const categoryTotals = categories
+  const categoryTotals = expenseCategories
     .map((category) => {
       const categoryTotal = expenseItems
         .filter((item) => item.category === category.id)
@@ -1904,9 +2034,24 @@ function signedMoney(value, type = "expense") {
   return `${type === "income" ? "+" : "-"}${money(Math.abs(Number(value || 0)))}`;
 }
 
-function getCategory(categoryId, type = "expense") {
-  const source = type === "income" ? incomeCategories : categories;
+function getCategory(categoryId, type = "expense", expenseCategories = categories) {
+  const source = type === "income" ? incomeCategories : expenseCategories;
   return source.find((entry) => entry.id === categoryId) || source.at(-1);
+}
+
+function mergeExpenseCategories(customCategories) {
+  const knownIds = new Set(categories.map((category) => category.id));
+  const validCustom = (Array.isArray(customCategories) ? customCategories : [])
+    .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
+    .map((category) => ({
+      id: String(category.id),
+      name: String(category.name).slice(0, 12),
+      color: category.color || "#6f927d",
+      icon: category.icon || "tag",
+      keywords: []
+    }));
+  const other = categories.find((category) => category.id === "other");
+  return [...categories.filter((category) => category.id !== "other"), ...validCustom, other];
 }
 
 function today() {
