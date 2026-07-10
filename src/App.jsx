@@ -310,6 +310,7 @@ function App() {
           <ReportScreen
             stats={stats}
             expenses={monthlyExpenses}
+            allExpenses={expenses}
             budget={settings.budget}
             selectedMonth={selectedMonth}
             currentMonth={currentMonth}
@@ -1210,7 +1211,21 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
   );
 }
 
-function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, onMonthChange, onEdit, onDelete }) {
+function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, currentMonth, onMonthChange, onEdit, onDelete }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  const previousMonth = shiftMonth(selectedMonth, -1);
+  const previousExpenses = useMemo(
+    () => sortRecordsByDateTime(allExpenses.filter((item) => item.date?.startsWith(previousMonth))),
+    [allExpenses, previousMonth]
+  );
+  const previousStats = useMemo(
+    () => getMonthStats(previousExpenses, budget, previousMonth, expenseCategories),
+    [previousExpenses, budget, previousMonth, expenseCategories]
+  );
+  const comparison = getMonthComparison(stats.total, previousStats.total);
+  const merchantRanking = useMemo(() => getMerchantRanking(expenses, stats.total), [expenses, stats.total]);
+  const budgetStatus = getBudgetStatus(stats, budget, selectedMonth, currentMonth);
+
   return (
     <Screen>
       <header className="screen-heading report-heading">
@@ -1236,8 +1251,71 @@ function ReportScreen({ stats, expenses, budget, selectedMonth, currentMonth, on
       </section>
 
       <section className="chart-panel">
-        <SectionTitle title="每日趋势" aside={`${stats.days.length} 天`} />
-        <TrendChart days={stats.days} />
+        <SectionTitle title="环比上月" aside={formatMonthLabel(previousMonth)} />
+        <div className="comparison-grid">
+          <div>
+            <span>上月支出</span>
+            <strong>{money(previousStats.total)}</strong>
+          </div>
+          <div>
+            <span>金额变化</span>
+            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>
+              {comparison.delta > 0 ? "+" : ""}{money(comparison.delta)}
+            </strong>
+          </div>
+          <div>
+            <span>环比变化</span>
+            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>
+              {comparison.rateLabel}
+            </strong>
+          </div>
+        </div>
+      </section>
+
+      <section className={`budget-alert ${budgetStatus.tone}`}>
+        <div>
+          <span>预算状态</span>
+          <strong>{budgetStatus.title}</strong>
+          <p>{budgetStatus.detail}</p>
+        </div>
+        <b>{Math.round(stats.usedRate)}%</b>
+        <div className="budget-alert-track">
+          <i style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
+        </div>
+        <div className="budget-alert-meta">
+          <span>预算 {money(budget)}</span>
+          <span>{budgetStatus.meta}</span>
+        </div>
+      </section>
+
+      <section className="chart-panel">
+        <SectionTitle title="消费趋势" aside="本月 / 上月" />
+        <div className="trend-legend">
+          <span><i className="current" />本月</span>
+          <span><i className="previous" />上月</span>
+        </div>
+        <TrendChart days={stats.days} previousDays={previousStats.days} />
+      </section>
+
+      <section className="chart-panel">
+        <SectionTitle title="商户排行" aside={`前 ${Math.min(merchantRanking.length, 5)} 名`} />
+        {merchantRanking.length === 0 ? (
+          <EmptyLine text="本月还没有商户消费记录" />
+        ) : (
+          <div className="merchant-ranking">
+            {merchantRanking.slice(0, 5).map((merchant, index) => (
+              <div className="merchant-rank-item" key={merchant.name}>
+                <b className="merchant-rank-number">{index + 1}</b>
+                <div>
+                  <strong>{merchant.name}</strong>
+                  <span>{merchant.count} 笔 · 平均 {money(merchant.average)}</span>
+                  <div><i style={{ width: `${merchant.percent}%` }} /></div>
+                </div>
+                <b>{money(merchant.total)}</b>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="chart-panel">
@@ -1759,26 +1837,32 @@ function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
   );
 }
 
-function TrendChart({ days }) {
-  const max = Math.max(...days.map((day) => day.total), 1);
-  const points = days
+function TrendChart({ days, previousDays = [] }) {
+  const visibleLength = Math.max(days.length, previousDays.length, 1);
+  const max = Math.max(...days.map((day) => day.total), ...previousDays.map((day) => day.total), 1);
+  const buildPoints = (source) => source
     .map((day, index) => {
-      const x = 14 + (index / Math.max(days.length - 1, 1)) * 252;
-      const y = 110 - (day.total / max) * 86;
+      const x = 14 + (index / Math.max(visibleLength - 1, 1)) * 252;
+      const y = 104 - (day.total / max) * 78;
       return `${x},${y}`;
     })
     .join(" ");
+  const points = buildPoints(days);
+  const previousPoints = buildPoints(previousDays);
 
   return (
-    <svg className="trend-chart" viewBox="0 0 280 128" role="img" aria-label="每日消费趋势">
-      <path d="M14 112H266" />
+    <svg className="trend-chart" viewBox="0 0 280 128" role="img" aria-label="本月与上月消费趋势">
+      <path d="M14 106H266" />
       <path d="M14 28H266" className="grid-line" />
-      <polyline points={points} />
+      {previousPoints && <polyline points={previousPoints} className="previous-line" />}
+      {points && <polyline points={points} className="current-line" />}
       {days.map((day, index) => {
-        const x = 14 + (index / Math.max(days.length - 1, 1)) * 252;
-        const y = 110 - (day.total / max) * 86;
-        return <circle key={day.date} cx={x} cy={y} r="3.8" />;
+        const x = 14 + (index / Math.max(visibleLength - 1, 1)) * 252;
+        const y = 104 - (day.total / max) * 78;
+        return <circle key={day.date} cx={x} cy={y} r="2.8" />;
       })}
+      <text x="14" y="122">1日</text>
+      <text x="255" y="122" textAnchor="end">{visibleLength}日</text>
     </svg>
   );
 }
@@ -1845,6 +1929,93 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCat
     maxExpense: expenseItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
     maxIncome: incomeItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
     days
+  };
+}
+
+function getMonthComparison(currentTotal, previousTotal) {
+  const current = Number(currentTotal || 0);
+  const previous = Number(previousTotal || 0);
+  const delta = current - previous;
+  let rateLabel = "0%";
+  if (previous > 0) {
+    const rate = (delta / previous) * 100;
+    rateLabel = `${rate > 0 ? "+" : ""}${Math.round(rate)}%`;
+  } else if (current > 0) {
+    rateLabel = "新增支出";
+  }
+  return { delta, rateLabel };
+}
+
+function getMerchantRanking(records, monthTotal) {
+  const grouped = new Map();
+  records
+    .filter((item) => item.type !== "income")
+    .forEach((item) => {
+      const name = String(item.merchant || "未填写商户").trim() || "未填写商户";
+      const amount = Number(item.amount || 0);
+      const current = grouped.get(name) || { name, total: 0, count: 0 };
+      current.total += amount;
+      current.count += 1;
+      grouped.set(name, current);
+    });
+
+  return Array.from(grouped.values())
+    .map((item) => ({
+      ...item,
+      average: item.count ? item.total / item.count : 0,
+      percent: monthTotal ? Math.min(100, (item.total / monthTotal) * 100) : 0
+    }))
+    .sort((a, b) => b.total - a.total || b.count - a.count);
+}
+
+function getBudgetStatus(stats, budget, selectedMonth, currentMonth) {
+  const amount = Number(budget || 0);
+  if (amount <= 0) {
+    return {
+      tone: "neutral",
+      title: "尚未设置预算",
+      detail: "设置月预算后，这里会显示接近预算和预计超支提醒。",
+      meta: "可在“我的”中设置"
+    };
+  }
+
+  const total = Number(stats.total || 0);
+  const remaining = amount - total;
+  const isCurrentMonth = selectedMonth === currentMonth;
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const elapsedDays = isCurrentMonth ? Math.max(1, Math.min(new Date().getDate(), daysInMonth)) : daysInMonth;
+  const projected = isCurrentMonth ? (total / elapsedDays) * daysInMonth : total;
+
+  if (total > amount) {
+    return {
+      tone: "danger",
+      title: "本月已经超支",
+      detail: `已超过预算 ${money(total - amount)}，建议留意接下来的非必要消费。`,
+      meta: `超支 ${money(total - amount)}`
+    };
+  }
+  if (isCurrentMonth && projected > amount) {
+    return {
+      tone: "warning",
+      title: "按当前速度预计会超支",
+      detail: `预计月底支出约 ${money(projected)}，高于当前月预算。`,
+      meta: `预计 ${money(projected)}`
+    };
+  }
+  if (stats.usedRate >= 80) {
+    return {
+      tone: "warning",
+      title: "预算即将用完",
+      detail: `当前已使用 ${Math.round(stats.usedRate)}%，剩余可用 ${money(remaining)}。`,
+      meta: `剩余 ${money(remaining)}`
+    };
+  }
+  return {
+    tone: "safe",
+    title: "预算状态正常",
+    detail: isCurrentMonth ? `按当前记录，月底预计支出约 ${money(projected)}。` : "该月支出保持在预算范围内。",
+    meta: `剩余 ${money(remaining)}`
   };
 }
 
