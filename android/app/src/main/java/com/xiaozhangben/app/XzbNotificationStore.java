@@ -59,6 +59,12 @@ final class XzbNotificationStore {
         return items;
     }
 
+    static int count(Context context) throws IOException {
+        File dir = getQueueDir(context);
+        File[] files = dir.listFiles((file, name) -> name.endsWith(".json"));
+        return files == null ? 0 : files.length;
+    }
+
     private static void pruneQueue(File dir) {
         File[] files = dir.listFiles((file, name) -> name.endsWith(".json"));
         if (files == null || files.length <= MAX_QUEUE_FILES) {

@@ -532,14 +532,30 @@ function ScanScreen({ onPending, onPendingBatch }) {
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
   const [isBatchRecognizing, setIsBatchRecognizing] = useState(false);
-  const [notificationEnabled, setNotificationEnabled] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState({
+    enabled: false,
+    connected: false,
+    lastSeenAt: 0,
+    lastAcceptedAt: 0,
+    lastReason: "never_seen",
+    queueCount: 0
+  });
   const [notificationNotice, setNotificationNotice] = useState("");
   const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
   const canUseNativeNotify = canUseNativeOcr;
 
   useEffect(() => {
     refreshNotificationPermission();
-  }, []);
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") refreshNotificationPermission();
+    };
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    window.addEventListener("focus", refreshNotificationPermission);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+      window.removeEventListener("focus", refreshNotificationPermission);
+    };
+  }, [canUseNativeNotify]);
 
   async function pickImageWithNativeOcr() {
     setCandidate(null);
@@ -806,9 +822,14 @@ function ScanScreen({ onPending, onPendingBatch }) {
     if (!canUseNativeNotify) return;
     try {
       const result = await XzbNotify.isEnabled();
-      setNotificationEnabled(Boolean(result?.enabled));
+      setNotificationStatus((current) => ({ ...current, ...result }));
+      if (result?.enabled && result?.connected) {
+        setNotificationNotice("通知监听已连接，新的付款通知会进入待确认。");
+      } else if (result?.enabled) {
+        setNotificationNotice("权限已开启，监听服务正在连接；可点“检查并同步”重试。");
+      }
     } catch {
-      setNotificationEnabled(false);
+      setNotificationStatus((current) => ({ ...current, enabled: false, connected: false }));
     }
   }
 
@@ -817,8 +838,12 @@ function ScanScreen({ onPending, onPendingBatch }) {
       setNotificationNotice("通知自动记账需要在安卓安装包里开启通知访问权限。");
       return;
     }
-    await XzbNotify.openSettings();
-    setNotificationNotice("已打开系统设置。开启小账本通知访问权限后，回到 App 点“同步新通知”。");
+    try {
+      await XzbNotify.openSettings();
+      setNotificationNotice("已打开系统设置。开启小账本后直接返回，App 会自动检查监听状态。");
+    } catch (error) {
+      setNotificationNotice(error?.message || "无法打开通知使用权设置，请在系统设置中搜索“小账本”。");
+    }
   }
 
   async function syncNotificationBills() {
@@ -828,17 +853,24 @@ function ScanScreen({ onPending, onPendingBatch }) {
     }
 
     try {
-      const enabled = await XzbNotify.isEnabled();
-      setNotificationEnabled(Boolean(enabled?.enabled));
-      if (!enabled?.enabled) {
+      let status = await XzbNotify.isEnabled();
+      setNotificationStatus((current) => ({ ...current, ...status }));
+      if (!status?.enabled) {
         setNotificationNotice("请先开启通知访问权限。");
         return;
       }
 
+      if (!status?.connected) {
+        status = await XzbNotify.reconnect();
+        setNotificationStatus((current) => ({ ...current, ...status }));
+      }
+
       const result = await XzbNotify.drainNotifications();
-      const entries = normalizeNotificationItems(result?.items || []);
+      const latestStatus = result?.status || status;
+      setNotificationStatus((current) => ({ ...current, ...latestStatus, queueCount: 0 }));
+      const entries = normalizeNotificationItems(result?.items || [], expenseCategories);
       if (!entries.length) {
-        setNotificationNotice("暂时没有新的微信/支付宝付款通知。开启权限后，只能捕获之后出现的新通知。");
+        setNotificationNotice(getNotificationEmptyMessage(latestStatus));
         return;
       }
 
@@ -892,15 +924,15 @@ function ScanScreen({ onPending, onPendingBatch }) {
       <section className="notification-sync-card">
         <div>
           <span>通知自动记账</span>
-          <strong>{notificationEnabled ? "已开启" : "待开启"}</strong>
-          <p>开启安卓通知访问权限后，微信/支付宝的新付款通知会自动进入待确认。</p>
+          <strong>{getNotificationStatusLabel(notificationStatus)}</strong>
+          <p>{getNotificationStatusDetail(notificationStatus)}</p>
         </div>
         <div className="notification-actions">
           <button className="secondary-button" type="button" onClick={openNotificationSettings}>
-            开启权限
+            管理权限
           </button>
           <button className="primary-button" type="button" onClick={syncNotificationBills}>
-            同步新通知
+            检查并同步
           </button>
         </div>
         {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
@@ -983,6 +1015,49 @@ function BatchImageQueue({ images }) {
       ))}
     </div>
   );
+}
+
+function getNotificationStatusLabel(status) {
+  if (!status?.enabled) return "权限未开启";
+  return status.connected ? "监听正常" : "权限已开，等待连接";
+}
+
+function getNotificationStatusDetail(status) {
+  if (!status?.enabled) {
+    return "需要在安卓系统的“通知使用权”中开启小账本。";
+  }
+  if (!status.connected) {
+    return "系统已授权，但监听服务未连接；点击“检查并同步”会自动重连。";
+  }
+  if (status.lastAcceptedAt) {
+    return `监听已连接，最近捕获付款通知：${formatNotificationCaptureTime(status.lastAcceptedAt)}。`;
+  }
+  if (status.lastSeenAt) {
+    return `监听已连接，最近收到平台通知：${formatNotificationCaptureTime(status.lastSeenAt)}。`;
+  }
+  return "监听已连接，等待微信或支付宝产生新的付款通知。";
+}
+
+function getNotificationEmptyMessage(status) {
+  if (!status?.connected) {
+    return "通知权限已开启，但监听服务尚未连接。已尝试重连；请把小账本的电池设置改为“不限制”后再试。";
+  }
+  if (status.lastReason === "not_payment") {
+    return "已经收到微信/支付宝通知，但通知文字里没有同时出现付款关键词和金额，因此没有生成账单。";
+  }
+  if (status.lastReason === "empty_text") {
+    return "已经收到平台通知，但系统隐藏了通知正文。请在微信/支付宝与锁屏通知设置中允许显示内容。";
+  }
+  if (status.lastReason === "store_failed") {
+    return "收到付款通知，但保存到待同步队列时失败，请重新打开小账本后再试。";
+  }
+  return "监听服务正常，暂时没有新的付款通知。开启权限之前出现的旧通知不会自动补录。";
+}
+
+function formatNotificationCaptureTime(value) {
+  const date = new Date(Number(value || 0));
+  if (Number.isNaN(date.getTime())) return "刚刚";
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
