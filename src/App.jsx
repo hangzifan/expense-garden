@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
@@ -27,6 +27,7 @@ const navItems = [
 const XzbOcr = registerPlugin("XzbOcr");
 const XzbNotify = registerPlugin("XzbNotify");
 const recordTypeLabels = { expense: "支出", income: "收入" };
+const defaultOcrCrop = { x: 4, y: 4, width: 92, height: 92 };
 
 const emptyDraft = () => ({
   type: "expense",
@@ -497,7 +498,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
   const [preview, setPreview] = useState("");
   const [selectedImageDataUrl, setSelectedImageDataUrl] = useState("");
   const [imageBatch, setImageBatch] = useState([]);
-  const [ocrCrop, setOcrCrop] = useState({ x: 50, y: 50, zoom: 1 });
+  const [ocrCrop, setOcrCrop] = useState(defaultOcrCrop);
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
   const [isBatchRecognizing, setIsBatchRecognizing] = useState(false);
@@ -517,7 +518,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
     setPreview("");
     setSelectedImageDataUrl("");
     setImageBatch([]);
-    setOcrCrop({ x: 50, y: 50, zoom: 1 });
+    setOcrCrop(defaultOcrCrop);
     setImageNotice("");
 
     if (!canUseNativeOcr) {
@@ -659,7 +660,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
       }))
     );
 
-    setOcrCrop({ x: 50, y: 50, zoom: 1 });
+    setOcrCrop(defaultOcrCrop);
     applySelectedImages(images);
 
     if (canUseNativeOcr) {
@@ -1096,28 +1097,91 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
 }
 
 function ScreenshotCropPanel({ crop, image, onCropChange }) {
-  const updateCrop = (key, value) => {
-    onCropChange({ ...crop, [key]: Number(value) });
-  };
+  const stageRef = useRef(null);
+  const dragRef = useRef(null);
+  const cropRef = useRef(normalizeOcrCrop(crop));
+  const [imageRatio, setImageRatio] = useState(9 / 16);
+  const safeCrop = normalizeOcrCrop(crop);
+
+  useEffect(() => {
+    cropRef.current = safeCrop;
+  }, [safeCrop.x, safeCrop.y, safeCrop.width, safeCrop.height]);
+
+  function startDrag(event, mode) {
+    const stage = stageRef.current;
+    if (!stage) return;
+    event.preventDefault();
+    stage.setPointerCapture?.(event.pointerId);
+    dragRef.current = {
+      mode,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      crop: cropRef.current
+    };
+  }
+
+  function moveCrop(event) {
+    const stage = stageRef.current;
+    const drag = dragRef.current;
+    if (!stage || !drag || event.pointerId !== drag.pointerId) return;
+
+    const bounds = stage.getBoundingClientRect();
+    const deltaX = ((event.clientX - drag.startX) / bounds.width) * 100;
+    const deltaY = ((event.clientY - drag.startY) / bounds.height) * 100;
+    const next = resizeOcrCrop(drag.crop, drag.mode, deltaX, deltaY);
+    cropRef.current = next;
+    onCropChange(next);
+  }
+
+  function endDrag(event) {
+    if (!dragRef.current || event.pointerId !== dragRef.current.pointerId) return;
+    dragRef.current = null;
+  }
 
   return (
     <section className="ocr-crop-panel">
-      <div className="ocr-crop-stage">
+      <div
+        ref={stageRef}
+        className="ocr-crop-stage"
+        style={{ aspectRatio: imageRatio, maxWidth: imageRatio < 0.72 ? "230px" : "340px" }}
+        onPointerMove={moveCrop}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
         <img
           alt=""
           src={image}
-          style={{
-            objectPosition: `${crop.x}% ${crop.y}%`,
-            transform: `scale(${crop.zoom})`
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth && naturalHeight) setImageRatio(naturalWidth / naturalHeight);
           }}
         />
-        <span>裁剪区域</span>
+        <div
+          className="ocr-crop-selection"
+          style={{
+            left: `${safeCrop.x}%`,
+            top: `${safeCrop.y}%`,
+            width: `${safeCrop.width}%`,
+            height: `${safeCrop.height}%`
+          }}
+          onPointerDown={(event) => startDrag(event, "move")}
+        >
+          {["nw", "ne", "sw", "se"].map((corner) => (
+            <button
+              key={corner}
+              className={`ocr-crop-handle ${corner}`}
+              type="button"
+              aria-label={`调整裁剪区域${corner}`}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                startDrag(event, corner);
+              }}
+            />
+          ))}
+        </div>
       </div>
-      <div className="crop-controls">
-        <CropSlider label="横向" max="100" min="0" step="1" value={crop.x} onChange={(value) => updateCrop("x", value)} />
-        <CropSlider label="纵向" max="100" min="0" step="1" value={crop.y} onChange={(value) => updateCrop("y", value)} />
-        <CropSlider label="缩放" max="2.8" min="1" step="0.01" value={crop.zoom} onChange={(value) => updateCrop("zoom", value)} />
-      </div>
+      <button className="secondary-button small crop-reset" type="button" onClick={() => onCropChange(defaultOcrCrop)}>重置裁剪</button>
     </section>
   );
 }
@@ -1599,7 +1663,8 @@ function EmptyLine({ text }) {
 }
 
 function getMonthStats(expenses, budget, month = today().slice(0, 7)) {
-  const expenseItems = expenses.filter((item) => item.type !== "income");
+  // Older records did not have a type; they are historical expense records.
+  const expenseItems = expenses.filter((item) => !item.type || item.type === "expense");
   const incomeItems = expenses.filter((item) => item.type === "income");
   const total = expenseItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const incomeTotal = incomeItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -1700,24 +1765,23 @@ async function cropCoverImage(src, crop) {
 
 async function cropOcrImage(src, crop) {
   const image = await loadImage(src);
-  const outputWidth = 1080;
-  const outputHeight = 1920;
+  const selected = normalizeOcrCrop(crop);
+  const sourceX = Math.round((image.naturalWidth * selected.x) / 100);
+  const sourceY = Math.round((image.naturalHeight * selected.y) / 100);
+  const sourceWidth = Math.max(1, Math.round((image.naturalWidth * selected.width) / 100));
+  const sourceHeight = Math.max(1, Math.round((image.naturalHeight * selected.height) / 100));
+  const maxSide = 2000;
+  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  const outputWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const outputHeight = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement("canvas");
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
   const context = canvas.getContext("2d");
-  const scale = Math.max(outputWidth / image.naturalWidth, outputHeight / image.naturalHeight) * crop.zoom;
-  const drawWidth = image.naturalWidth * scale;
-  const drawHeight = image.naturalHeight * scale;
-  const overflowX = Math.max(0, drawWidth - outputWidth);
-  const overflowY = Math.max(0, drawHeight - outputHeight);
-  const dx = -overflowX * (crop.x / 100);
-  const dy = -overflowY * (crop.y / 100);
-
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, outputWidth, outputHeight);
-  context.drawImage(image, dx, dy, drawWidth, drawHeight);
+  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
 
   return canvas.toDataURL("image/jpeg", 0.92);
 }
@@ -1738,6 +1802,54 @@ function enhanceCanvasForOcr(context, width, height) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeOcrCrop(crop) {
+  const minSize = 12;
+  const width = clamp(Number(crop?.width ?? 92), minSize, 100);
+  const height = clamp(Number(crop?.height ?? 92), minSize, 100);
+  return {
+    x: clamp(Number(crop?.x ?? 4), 0, 100 - width),
+    y: clamp(Number(crop?.y ?? 4), 0, 100 - height),
+    width,
+    height
+  };
+}
+
+function resizeOcrCrop(crop, mode, deltaX, deltaY) {
+  const current = normalizeOcrCrop(crop);
+  const minSize = 12;
+  if (mode === "move") {
+    return normalizeOcrCrop({
+      ...current,
+      x: clamp(current.x + deltaX, 0, 100 - current.width),
+      y: clamp(current.y + deltaY, 0, 100 - current.height)
+    });
+  }
+
+  const right = current.x + current.width;
+  const bottom = current.y + current.height;
+  let x = current.x;
+  let y = current.y;
+  let width = current.width;
+  let height = current.height;
+
+  if (mode.includes("w")) {
+    x = clamp(current.x + deltaX, 0, right - minSize);
+    width = right - x;
+  }
+  if (mode.includes("e")) width = clamp(current.width + deltaX, minSize, 100 - current.x);
+  if (mode.includes("n")) {
+    y = clamp(current.y + deltaY, 0, bottom - minSize);
+    height = bottom - y;
+  }
+  if (mode.includes("s")) height = clamp(current.height + deltaY, minSize, 100 - current.y);
+
+  return normalizeOcrCrop({ x, y, width, height });
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function loadImage(src) {
