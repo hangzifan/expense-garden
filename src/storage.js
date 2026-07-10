@@ -49,7 +49,9 @@ function createDefaultState() {
       coverPresetId: coverPresets[0].id,
       coverImage: "",
       darkMode: false,
-      customExpenseCategories: []
+      customExpenseCategories: [],
+      categoryOrder: [],
+      categoryKeywordOverrides: {}
     }
   };
 }
@@ -63,8 +65,19 @@ function normalizeState(state) {
       ...defaults.settings,
       ...(state?.settings || {}),
       customExpenseCategories: Array.isArray(state?.settings?.customExpenseCategories)
-        ? state.settings.customExpenseCategories.filter((category) => category?.id && category?.name)
-        : []
+        ? state.settings.customExpenseCategories
+          .filter((category) => category?.id && category?.name)
+          .map((category) => ({
+            ...category,
+            keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : []
+          }))
+        : [],
+      categoryOrder: Array.isArray(state?.settings?.categoryOrder)
+        ? state.settings.categoryOrder.filter(Boolean)
+        : [],
+      categoryKeywordOverrides: state?.settings?.categoryKeywordOverrides && typeof state.settings.categoryKeywordOverrides === "object"
+        ? state.settings.categoryKeywordOverrides
+        : {}
     }
   };
 }

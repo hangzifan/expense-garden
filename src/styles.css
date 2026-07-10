@@ -227,7 +227,6 @@ body[data-theme="dark"] .cover-data-area {
 .expense-main,
 .pending-actions,
 .form-actions,
-.data-actions,
 .sample-row,
 .toggle-row {
   display: flex;
@@ -522,6 +521,94 @@ body[data-theme="dark"] .cover-data-area {
 .category-manager {
   display: grid;
   gap: 14px;
+}
+
+.category-sort-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.category-sort-row {
+  display: grid;
+  grid-template-columns: 34px 24px minmax(0, 1fr) 34px 34px;
+  align-items: center;
+  gap: 7px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+  transition: background 120ms ease, opacity 120ms ease;
+}
+
+.category-sort-row.dragging {
+  opacity: 0.58;
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.category-grip {
+  width: 34px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.category-grip:active {
+  cursor: grabbing;
+}
+
+.category-list-icon {
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+}
+
+.category-sort-row > div {
+  min-width: 0;
+}
+
+.category-sort-row > div b,
+.category-sort-row > div span {
+  display: block;
+}
+
+.category-sort-row > div b {
+  font-size: 14px;
+}
+
+.category-sort-row > div span {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-editor {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.category-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.category-editor-heading span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.category-editor-heading h3 {
+  margin-top: 3px;
 }
 
 .category-summary {
@@ -1031,7 +1118,8 @@ body[data-theme="dark"] .cover-data-area {
 .comparison-grid strong {
   display: block;
   margin-top: 5px;
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 

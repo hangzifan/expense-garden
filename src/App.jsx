@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
-import { downloadJson, loadState, readFileAsDataUrl, readFileAsText, saveState } from "./storage.js";
+import { loadState, readFileAsDataUrl, saveState } from "./storage.js";
 import { parseExpenseText } from "./parser.js";
 import { createId } from "./ids.js";
 import {
@@ -9,6 +9,7 @@ import {
   CategoryIcon,
   CheckIcon,
   EditIcon,
+  GripIcon,
   PlusIcon,
   ScanIcon,
   TrashIcon,
@@ -54,12 +55,12 @@ const emptyDraft = () => ({
   note: ""
 });
 
-function normalizeNotificationItems(items) {
+function normalizeNotificationItems(items, expenseCategories = categories) {
   return (Array.isArray(items) ? items : [])
     .map((item, index) => {
       const rawText = String(item?.rawText || "").trim();
       if (!rawText) return null;
-      const parsed = parseExpenseText(rawText);
+      const parsed = parseExpenseText(rawText, expenseCategories);
       const method = item?.packageName === "com.eg.android.AlipayGphone"
         ? "支付宝"
         : item?.packageName === "com.tencent.mm"
@@ -143,8 +144,12 @@ function App() {
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const expenseCategories = useMemo(
-    () => mergeExpenseCategories(settings.customExpenseCategories),
-    [settings.customExpenseCategories]
+    () => mergeExpenseCategories(
+      settings.customExpenseCategories,
+      settings.categoryOrder,
+      settings.categoryKeywordOverrides
+    ),
+    [settings.customExpenseCategories, settings.categoryOrder, settings.categoryKeywordOverrides]
   );
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
   const currentMonth = today().slice(0, 7);
@@ -177,7 +182,7 @@ function App() {
         const enabled = await XzbNotify.isEnabled();
         if (stopped || !enabled?.enabled) return;
         const result = await XzbNotify.drainNotifications();
-        const entries = normalizeNotificationItems(result?.items || []);
+        const entries = normalizeNotificationItems(result?.items || [], expenseCategories);
         if (entries.length) addPendingBatch(entries, { navigate: false });
       } catch {
         // Notification access is optional; failed sync should never block bookkeeping.
@@ -196,7 +201,7 @@ function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [canUseNativeNotify]);
+  }, [canUseNativeNotify, expenseCategories]);
 
   function saveExpense(entry) {
     const type = entry.type === "income" ? "income" : "expense";
@@ -323,7 +328,6 @@ function App() {
           <ProfileScreen
             settings={settings}
             setSettings={setSettings}
-            state={appState}
             setExpenses={setExpenses}
             setPending={setPending}
           />
@@ -517,6 +521,7 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
 }
 
 function ScanScreen({ onPending, onPendingBatch }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
   const [rawText, setRawText] = useState("");
   const [candidate, setCandidate] = useState(null);
   const [batchCandidates, setBatchCandidates] = useState([]);
@@ -574,7 +579,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
           const text = String(item?.text || "").trim();
           if (!text) return null;
           return {
-            ...parseExpenseText(text),
+            ...parseExpenseText(text, expenseCategories),
             id: createId(`batch-${index}`),
             source: "截图识别",
             note: `截图 ${index + 1}`,
@@ -751,7 +756,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
 
       try {
         const text = await readImageText(image.dataUrl);
-        const parsed = text ? parseExpenseText(text) : null;
+        const parsed = text ? parseExpenseText(text, expenseCategories) : null;
         setImageBatch((items) =>
           items.map((item) => (item.id === image.id ? { ...item, status: text ? "已识别" : "无文字", text } : item))
         );
@@ -853,7 +858,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
       return;
     }
 
-    const parsed = parseExpenseText(normalizedText);
+    const parsed = parseExpenseText(normalizedText, expenseCategories);
     const nextCandidate = { ...parsed, source };
     setCandidate(nextCandidate);
     setImageNotice(
@@ -1259,9 +1264,7 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
           </div>
           <div>
             <span>金额变化</span>
-            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>
-              {comparison.delta > 0 ? "+" : ""}{money(comparison.delta)}
-            </strong>
+            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>{comparison.amountLabel}</strong>
           </div>
           <div>
             <span>环比变化</span>
@@ -1349,11 +1352,14 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
   );
 }
 
-function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }) {
+function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   const [coverDraft, setCoverDraft] = useState(null);
   const [coverCrop, setCoverCrop] = useState({ x: 50, y: 50, zoom: 1 });
-  const [categoryDraft, setCategoryDraft] = useState({ name: "", icon: "tag", color: "#6f927d" });
+  const [categoryEditor, setCategoryEditor] = useState(null);
+  const [draggingCategoryId, setDraggingCategoryId] = useState("");
+  const categoryDragRef = useRef("");
   const customCategories = settings.customExpenseCategories || [];
+  const expenseCategories = useContext(ExpenseCategoriesContext);
 
   async function uploadCover(file) {
     if (!file) return;
@@ -1369,41 +1375,114 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
     setCoverDraft(null);
   }
 
-  async function importData(file) {
-    if (!file) return;
-    const text = await readFileAsText(file);
-    const imported = JSON.parse(text);
-    if (Array.isArray(imported.expenses)) setExpenses(imported.expenses);
-    if (Array.isArray(imported.pending)) setPending(imported.pending);
-    if (imported.settings) setSettings({ ...settings, ...imported.settings });
+  function openCategoryEditor(category) {
+    setCategoryEditor({
+      id: category?.id || "",
+      name: category?.name || "",
+      icon: category?.icon || "tag",
+      color: category?.color || "#6f927d",
+      keywordsText: (category?.keywords || []).join("、"),
+      custom: Boolean(category?.custom),
+      isNew: !category
+    });
   }
 
-  function addCustomCategory() {
-    const name = categoryDraft.name.trim().slice(0, 12);
+  function saveCategoryEditor() {
+    if (!categoryEditor) return;
+    const name = categoryEditor.name.trim().slice(0, 12);
     if (!name) return;
-    const duplicate = mergeExpenseCategories(customCategories).some((category) => category.name === name);
+    const keywords = parseCategoryKeywords(categoryEditor.keywordsText);
+    const duplicate = expenseCategories.some((category) => category.name === name && category.id !== categoryEditor.id);
     if (duplicate) return;
-    const nextCategory = {
-      id: createId("category"),
-      name,
-      icon: categoryDraft.icon,
-      color: categoryDraft.color,
-      keywords: []
-    };
-    setSettings({
-      ...settings,
-      customExpenseCategories: [...customCategories, nextCategory]
-    });
-    setCategoryDraft({ name: "", icon: "tag", color: "#6f927d" });
+
+    if (categoryEditor.isNew) {
+      const nextCategory = {
+        id: createId("category"),
+        name,
+        icon: categoryEditor.icon,
+        color: categoryEditor.color,
+        keywords,
+        custom: true
+      };
+      setSettings((current) => ({
+        ...current,
+        customExpenseCategories: [...(current.customExpenseCategories || []), nextCategory],
+        categoryOrder: [...expenseCategories.map((category) => category.id), nextCategory.id]
+      }));
+    } else if (categoryEditor.custom) {
+      setSettings((current) => ({
+        ...current,
+        customExpenseCategories: (current.customExpenseCategories || []).map((category) =>
+          category.id === categoryEditor.id
+            ? { ...category, name, icon: categoryEditor.icon, color: categoryEditor.color, keywords, custom: true }
+            : category
+        )
+      }));
+    } else {
+      setSettings((current) => ({
+        ...current,
+        categoryKeywordOverrides: {
+          ...(current.categoryKeywordOverrides || {}),
+          [categoryEditor.id]: keywords
+        }
+      }));
+    }
+    setCategoryEditor(null);
   }
 
   function removeCustomCategory(category) {
-    setSettings({
-      ...settings,
-      customExpenseCategories: customCategories.filter((item) => item.id !== category.id)
-    });
+    if (!window.confirm(`删除“${category.name}”分类吗？已有账单会归入“其他”。`)) return;
+    setSettings((current) => ({
+      ...current,
+      customExpenseCategories: (current.customExpenseCategories || []).filter((item) => item.id !== category.id),
+      categoryOrder: (current.categoryOrder || []).filter((id) => id !== category.id)
+    }));
     setExpenses((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
     setPending((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
+    if (categoryEditor?.id === category.id) setCategoryEditor(null);
+  }
+
+  function moveCategory(sourceId, targetId) {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const order = expenseCategories.map((category) => category.id);
+    const sourceIndex = order.indexOf(sourceId);
+    const targetIndex = order.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    order.splice(sourceIndex, 1);
+    order.splice(targetIndex, 0, sourceId);
+    setSettings((current) => ({ ...current, categoryOrder: order }));
+  }
+
+  function startCategoryPointerDrag(event, categoryId) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    categoryDragRef.current = categoryId;
+    setDraggingCategoryId(categoryId);
+  }
+
+  function moveCategoryPointerDrag(event) {
+    const sourceId = categoryDragRef.current;
+    if (!sourceId) return;
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-category-id]");
+    const targetId = target?.dataset?.categoryId;
+    if (targetId && targetId !== sourceId) moveCategory(sourceId, targetId);
+  }
+
+  function endCategoryPointerDrag() {
+    categoryDragRef.current = "";
+    setDraggingCategoryId("");
+  }
+
+  function startCategoryHtmlDrag(event, categoryId) {
+    categoryDragRef.current = categoryId;
+    setDraggingCategoryId(categoryId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", categoryId);
+  }
+
+  function dragCategoryOver(event, targetId) {
+    event.preventDefault();
+    moveCategory(categoryDragRef.current, targetId);
   }
 
   return (
@@ -1460,76 +1539,126 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
           ))}
         </div>
 
-        <SectionTitle title="消费分类" aside="自定义" />
+        <SectionTitle title="消费分类" aside="拖动排序" />
         <section className="settings-panel category-manager">
-          <div className="category-summary" aria-label="当前消费分类">
-            {mergeExpenseCategories(customCategories).map((category) => (
-              <span key={category.id}>
-                <i style={{ color: category.color }}><CategoryIcon name={category.icon} size={16} /></i>
-                {category.name}
-              </span>
+          <div
+            className="category-sort-list"
+            onPointerMove={moveCategoryPointerDrag}
+            onPointerUp={endCategoryPointerDrag}
+            onPointerCancel={endCategoryPointerDrag}
+          >
+            {expenseCategories.map((category) => (
+              <div
+                className={draggingCategoryId === category.id ? "category-sort-row dragging" : "category-sort-row"}
+                data-category-id={category.id}
+                draggable
+                key={category.id}
+                onDragStart={(event) => startCategoryHtmlDrag(event, category.id)}
+                onDragOver={(event) => dragCategoryOver(event, category.id)}
+                onDragEnd={endCategoryPointerDrag}
+              >
+                <button
+                  className="category-grip"
+                  type="button"
+                  aria-label={`拖动${category.name}`}
+                  onPointerDown={(event) => startCategoryPointerDrag(event, category.id)}
+                >
+                  <GripIcon />
+                </button>
+                <span className="category-list-icon" style={{ color: category.color }}>
+                  <CategoryIcon name={category.icon} size={19} />
+                </span>
+                <div>
+                  <b>{category.name}</b>
+                  <span>{category.keywords.length ? category.keywords.join("、") : "未设置关键词"}</span>
+                </div>
+                <button className="row-icon" type="button" aria-label={`编辑${category.name}`} onClick={() => openCategoryEditor(category)}>
+                  <EditIcon />
+                </button>
+                {category.custom && (
+                  <button className="row-icon" type="button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category)}>
+                    <TrashIcon />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
 
-          <Field label="新分类名称">
-            <input
-              value={categoryDraft.name}
-              maxLength="12"
-              placeholder="例如：宠物"
-              onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })}
-            />
-          </Field>
-
-          <div className="category-designer">
-            <div>
-              <span>图标</span>
-              <div className="icon-picker">
-                {categoryIconOptions.map((icon) => (
-                  <button
-                    key={icon.id}
-                    type="button"
-                    className={categoryDraft.icon === icon.id ? "selected" : ""}
-                    title={icon.name}
-                    aria-label={icon.name}
-                    onClick={() => setCategoryDraft({ ...categoryDraft, icon: icon.id })}
-                  >
-                    <CategoryIcon name={icon.id} size={19} />
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <span>颜色</span>
-              <div className="color-picker">
-                {categoryColors.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className={categoryDraft.color === color ? "selected" : ""}
-                    aria-label="选择分类颜色"
-                    style={{ background: color }}
-                    onClick={() => setCategoryDraft({ ...categoryDraft, color })}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <button className="primary-button full" type="button" disabled={!categoryDraft.name.trim()} onClick={addCustomCategory}>
+          <button className="secondary-button full" type="button" onClick={() => openCategoryEditor(null)}>
             <PlusIcon /> 添加分类
           </button>
 
-          {customCategories.length > 0 && (
-            <div className="custom-category-list">
-              {customCategories.map((category) => (
-                <div key={category.id}>
-                  <span style={{ color: category.color }}><CategoryIcon name={category.icon} size={18} /></span>
-                  <b>{category.name}</b>
-                  <button type="button" className="ghost-button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category)}>
-                    <TrashIcon />
-                  </button>
+          {categoryEditor && (
+            <div className="category-editor">
+              <div className="category-editor-heading">
+                <div>
+                  <span>{categoryEditor.isNew ? "新分类" : categoryEditor.custom ? "编辑自定义分类" : "内置分类"}</span>
+                  <h3>{categoryEditor.isNew ? "设计分类" : categoryEditor.name}</h3>
                 </div>
-              ))}
+                <button className="ghost-button" type="button" aria-label="关闭分类编辑" onClick={() => setCategoryEditor(null)}>×</button>
+              </div>
+
+              <Field label="分类名称">
+                <input
+                  value={categoryEditor.name}
+                  maxLength="12"
+                  disabled={!categoryEditor.custom && !categoryEditor.isNew}
+                  placeholder="例如：宠物"
+                  onChange={(event) => setCategoryEditor({ ...categoryEditor, name: event.target.value })}
+                />
+              </Field>
+
+              {(categoryEditor.custom || categoryEditor.isNew) && (
+                <div className="category-designer">
+                  <div>
+                    <span>图标</span>
+                    <div className="icon-picker">
+                      {categoryIconOptions.map((icon) => (
+                        <button
+                          key={icon.id}
+                          type="button"
+                          className={categoryEditor.icon === icon.id ? "selected" : ""}
+                          title={icon.name}
+                          aria-label={icon.name}
+                          onClick={() => setCategoryEditor({ ...categoryEditor, icon: icon.id })}
+                        >
+                          <CategoryIcon name={icon.id} size={19} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span>颜色</span>
+                    <div className="color-picker">
+                      {categoryColors.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className={categoryEditor.color === color ? "selected" : ""}
+                          aria-label="选择分类颜色"
+                          style={{ background: color }}
+                          onClick={() => setCategoryEditor({ ...categoryEditor, color })}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <Field label="自动归类关键词">
+                <textarea
+                  value={categoryEditor.keywordsText}
+                  placeholder="例如：瑞幸、星巴克、美团外卖"
+                  onChange={(event) => setCategoryEditor({ ...categoryEditor, keywordsText: event.target.value })}
+                />
+              </Field>
+
+              <div className="form-actions">
+                <button className="secondary-button" type="button" onClick={() => setCategoryEditor(null)}>取消</button>
+                <button className="primary-button" type="button" disabled={!categoryEditor.name.trim()} onClick={saveCategoryEditor}>
+                  <CheckIcon /> 保存
+                </button>
+              </div>
             </div>
           )}
         </section>
@@ -1552,15 +1681,6 @@ function ProfileScreen({ settings, setSettings, state, setExpenses, setPending }
           </label>
         </section>
 
-        <section className="settings-panel">
-          <div className="data-actions">
-            <button className="secondary-button" type="button" onClick={() => downloadJson("xiaozhangben-backup.json", state)}>导出</button>
-            <label className="secondary-button">
-              导入
-              <input type="file" accept="application/json" onChange={(event) => importData(event.target.files?.[0])} />
-            </label>
-          </div>
-        </section>
       </Screen>
 
       {coverDraft && (
@@ -1901,8 +2021,8 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCat
         percent: total ? Math.round((categoryTotal / total) * 100) : 0
       };
     })
-    .filter((item) => item.total > 0)
-    .sort((a, b) => b.total - a.total);
+    .filter((item) => item.total > 0);
+  const topCategory = categoryTotals.slice().sort((a, b) => b.total - a.total)[0];
 
   const [year, monthNumber] = month.split("-").map(Number);
   const now = new Date();
@@ -1925,7 +2045,7 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCat
     usedRate: budget ? (total / budget) * 100 : 0,
     dailyAverage: days.length ? total / days.length : 0,
     categoryTotals,
-    topCategory: categoryTotals[0],
+    topCategory,
     maxExpense: expenseItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
     maxIncome: incomeItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
     days
@@ -1936,14 +2056,19 @@ function getMonthComparison(currentTotal, previousTotal) {
   const current = Number(currentTotal || 0);
   const previous = Number(previousTotal || 0);
   const delta = current - previous;
-  let rateLabel = "0%";
+  let rateLabel = "与上月持平";
   if (previous > 0) {
     const rate = (delta / previous) * 100;
-    rateLabel = `${rate > 0 ? "+" : ""}${Math.round(rate)}%`;
+    rateLabel = rate > 0 ? `增加 ${Math.round(rate)}%` : rate < 0 ? `减少 ${Math.abs(Math.round(rate))}%` : "与上月持平";
   } else if (current > 0) {
-    rateLabel = "新增支出";
+    rateLabel = "上月无支出";
   }
-  return { delta, rateLabel };
+  const amountLabel = delta > 0
+    ? `多支出 ${money(delta)}`
+    : delta < 0
+      ? `少支出 ${money(Math.abs(delta))}`
+      : "与上月持平";
+  return { delta, amountLabel, rateLabel };
 }
 
 function getMerchantRanking(records, monthTotal) {
@@ -2210,8 +2335,15 @@ function getCategory(categoryId, type = "expense", expenseCategories = categorie
   return source.find((entry) => entry.id === categoryId) || source.at(-1);
 }
 
-function mergeExpenseCategories(customCategories) {
+function mergeExpenseCategories(customCategories, categoryOrder = [], keywordOverrides = {}) {
   const knownIds = new Set(categories.map((category) => category.id));
+  const builtIn = categories.map((category) => ({
+    ...category,
+    custom: false,
+    keywords: Array.isArray(keywordOverrides?.[category.id])
+      ? keywordOverrides[category.id].filter(Boolean)
+      : category.keywords
+  }));
   const validCustom = (Array.isArray(customCategories) ? customCategories : [])
     .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
     .map((category) => ({
@@ -2219,10 +2351,27 @@ function mergeExpenseCategories(customCategories) {
       name: String(category.name).slice(0, 12),
       color: category.color || "#6f927d",
       icon: category.icon || "tag",
-      keywords: []
+      keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : [],
+      custom: true
     }));
-  const other = categories.find((category) => category.id === "other");
-  return [...categories.filter((category) => category.id !== "other"), ...validCustom, other];
+  const other = builtIn.find((category) => category.id === "other");
+  const all = [...builtIn.filter((category) => category.id !== "other"), ...validCustom, other];
+  const byId = new Map(all.map((category) => [category.id, category]));
+  const ordered = (Array.isArray(categoryOrder) ? categoryOrder : [])
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+  const orderedIds = new Set(ordered.map((category) => category.id));
+  return [...ordered, ...all.filter((category) => !orderedIds.has(category.id))];
+}
+
+function parseCategoryKeywords(value) {
+  return Array.from(new Set(
+    String(value || "")
+      .split(/[、，,;；\n]+/)
+      .map((keyword) => keyword.trim())
+      .filter(Boolean)
+      .slice(0, 30)
+  ));
 }
 
 function today() {

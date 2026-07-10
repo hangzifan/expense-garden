@@ -28,7 +28,7 @@ const merchantPatterns = [
 
 const uselessLinePattern = /付款成功|支付成功|交易成功|扣款成功|消费成功|收款成功|退款成功|微信|支付宝|￥|¥|RMB|CNY|金额|订单|单号|时间|账单|详情|银行卡|余额|零钱|使用.*支付|上午|下午|晚上|凌晨|昨天|今天|前天|付款方式|支付方式|商户单号|交易单号|当前状态|完成|成功|待确认/i;
 
-export function parseExpenseText(rawText) {
+export function parseExpenseText(rawText, expenseCategories = categories) {
   const raw = normalizeOcrText(rawText);
   const compact = raw.replace(/\s+/g, " ").trim();
   const lines = splitUsefulLines(raw);
@@ -37,7 +37,7 @@ export function parseExpenseText(rawText) {
   const amount = extractAmount(raw, compact, lines);
   const { date, time } = extractDateTime(raw);
   const merchant = extractMerchant(compact, lines);
-  const category = suggestCategory(`${merchant} ${raw}`, type);
+  const category = suggestCategory(`${merchant} ${raw}`, type, expenseCategories);
   const confidence = scoreConfidence({ amount, merchant, date, time, method });
 
   return {
@@ -55,9 +55,11 @@ export function parseExpenseText(rawText) {
   };
 }
 
-export function suggestCategory(text, type = "expense") {
+export function suggestCategory(text, type = "expense", expenseCategories = categories) {
   const haystack = String(text || "").toLowerCase();
-  const source = type === "income" ? incomeCategories : categories;
+  const source = type === "income"
+    ? incomeCategories
+    : [...expenseCategories].sort((a, b) => Number(Boolean(b.custom)) - Number(Boolean(a.custom)));
   const matched = source.find((category) =>
     category.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()))
   );

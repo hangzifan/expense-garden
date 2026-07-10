@@ -106,6 +106,19 @@ export function EditIcon() {
   );
 }
 
+export function GripIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="8" cy="6" r="1" />
+      <circle cx="16" cy="6" r="1" />
+      <circle cx="8" cy="12" r="1" />
+      <circle cx="16" cy="12" r="1" />
+      <circle cx="8" cy="18" r="1" />
+      <circle cx="16" cy="18" r="1" />
+    </svg>
+  );
+}
+
 export function UploadIcon() {
   return (
     <svg {...iconProps}>
