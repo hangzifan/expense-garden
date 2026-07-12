@@ -50,7 +50,13 @@ final class XzbNotificationStore {
         for (File file : files) {
             try {
                 String raw = readFile(file);
-                items.put(new JSONObject(raw));
+                JSONObject item = new JSONObject(raw);
+                if (XzbPaymentNotificationService.isStoredNotificationAccepted(
+                    item.optString("packageName", ""),
+                    item.optString("rawText", "")
+                )) {
+                    items.put(item);
+                }
                 file.delete();
             } catch (JSONException | IOException error) {
                 quarantineFile(file);

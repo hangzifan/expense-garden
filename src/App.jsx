@@ -73,7 +73,9 @@ function normalizeNotificationItems(items, expenseCategories = categories) {
         method,
         source: "通知识别",
         rawText,
-        note: "来自系统通知"
+        note: parsed.merchant === "未识别商户"
+          ? "通知未包含明确商户，请核对"
+          : "来自系统通知"
       };
     })
     .filter(Boolean);
@@ -1073,7 +1075,19 @@ function getNotificationEmptyMessage(status) {
     return "通知权限已开启，但监听服务尚未连接。已尝试重连；请把小账本的电池设置改为“不限制”后再试。";
   }
   if (status.lastReason === "not_payment") {
-    return "已经收到微信/支付宝通知，但通知文字里没有同时出现付款关键词和金额，因此没有生成账单。";
+    return "已经收到微信/支付宝通知，但内容不是明确交易通知，因此没有生成账单。";
+  }
+  if (status.lastReason === "ad_filtered") {
+    return "已识别为优惠、活动或广告通知，本次没有生成账单。";
+  }
+  if (status.lastReason === "missing_amount") {
+    return "通知具有交易内容，但系统没有提供可读取的金额，因此无法自动生成账单。";
+  }
+  if (status.lastReason === "weak_signal") {
+    return "通知提到了支付，但发送者或交易状态不够明确，已为你拦截以防误记。";
+  }
+  if (status.lastReason === "duplicate") {
+    return "这条交易通知是短时间内的重复更新，已自动忽略。";
   }
   if (status.lastReason === "empty_text") {
     return "已经收到平台通知，但系统隐藏了通知正文。请在微信/支付宝与锁屏通知设置中允许显示内容。";
