@@ -51,7 +51,8 @@ function createDefaultState() {
       darkMode: false,
       customExpenseCategories: [],
       categoryOrder: [],
-      categoryKeywordOverrides: {}
+      categoryKeywordOverrides: {},
+      categoryOverrides: {}
     }
   };
 }
@@ -77,6 +78,9 @@ function normalizeState(state) {
         : [],
       categoryKeywordOverrides: state?.settings?.categoryKeywordOverrides && typeof state.settings.categoryKeywordOverrides === "object"
         ? state.settings.categoryKeywordOverrides
+        : {},
+      categoryOverrides: state?.settings?.categoryOverrides && typeof state.settings.categoryOverrides === "object"
+        ? state.settings.categoryOverrides
         : {}
     }
   };

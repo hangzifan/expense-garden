@@ -147,9 +147,15 @@ function App() {
     () => mergeExpenseCategories(
       settings.customExpenseCategories,
       settings.categoryOrder,
-      settings.categoryKeywordOverrides
+      settings.categoryKeywordOverrides,
+      settings.categoryOverrides
     ),
-    [settings.customExpenseCategories, settings.categoryOrder, settings.categoryKeywordOverrides]
+    [
+      settings.customExpenseCategories,
+      settings.categoryOrder,
+      settings.categoryKeywordOverrides,
+      settings.categoryOverrides
+    ]
   );
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
   const currentMonth = today().slice(0, 7);
@@ -528,6 +534,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
   const [preview, setPreview] = useState("");
   const [selectedImageDataUrl, setSelectedImageDataUrl] = useState("");
   const [imageBatch, setImageBatch] = useState([]);
+  const [activeBatchImageId, setActiveBatchImageId] = useState("");
   const [ocrCrop, setOcrCrop] = useState(defaultOcrCrop);
   const [status, setStatus] = useState("等待截图");
   const [imageNotice, setImageNotice] = useState("");
@@ -543,6 +550,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
   const [notificationNotice, setNotificationNotice] = useState("");
   const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
   const canUseNativeNotify = canUseNativeOcr;
+  const activeBatchImage = imageBatch.find((image) => image.id === activeBatchImageId) || imageBatch[0] || null;
 
   useEffect(() => {
     refreshNotificationPermission();
@@ -564,6 +572,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
     setPreview("");
     setSelectedImageDataUrl("");
     setImageBatch([]);
+    setActiveBatchImageId("");
     setOcrCrop(defaultOcrCrop);
     setImageNotice("");
 
@@ -575,46 +584,14 @@ function ScanScreen({ onPending, onPendingBatch }) {
 
     setStatus("正在打开相册");
     try {
-      const result = await XzbOcr.pickImagesAndRecognize();
-      const results = Array.isArray(result?.results) ? result.results : [];
-      if (!results.length) {
+      const result = await XzbOcr.pickImages();
+      const images = Array.isArray(result?.images) ? result.images : [];
+      if (!images.length) {
         setStatus("读取失败");
         setImageNotice("没有读到图片内容，请重新选择。");
         return;
       }
-      const nextImages = results.map((item, index) => ({
-        id: createId(`image-${index}`),
-        dataUrl: "",
-        uri: item?.uri || "",
-        name: `截图 ${index + 1}`,
-        status: item?.text ? "已识别" : "无文字",
-        text: String(item?.text || "")
-      }));
-      const candidates = results
-        .map((item, index) => {
-          const text = String(item?.text || "").trim();
-          if (!text) return null;
-          return {
-            ...parseExpenseText(text, expenseCategories),
-            id: createId(`batch-${index}`),
-            source: "截图识别",
-            note: `截图 ${index + 1}`,
-            rawText: text
-          };
-        })
-        .filter(Boolean);
-
-      setImageBatch(nextImages);
-      setBatchCandidates(candidates);
-      setPreview("");
-      setSelectedImageDataUrl("");
-      setRawText(candidates[0]?.rawText || "");
-      setStatus(candidates.length ? `已生成 ${candidates.length} 条候选` : "未识别到账单");
-      setImageNotice(
-        candidates.length
-          ? "批量识别完成，请检查金额和商户后加入待确认。"
-          : "没有生成候选账单，请换更清晰的截图，或用下方单图裁剪识别。"
-      );
+      applySelectedImages(images);
     } catch (error) {
       setStatus("等待截图");
       setImageNotice(error?.message || "没有选择图片。");
@@ -629,7 +606,8 @@ function ScanScreen({ onPending, onPendingBatch }) {
         uri: image?.uri || "",
         name: `截图 ${index + 1}`,
         status: "等待识别",
-        text: ""
+        text: "",
+        crop: { ...defaultOcrCrop }
       }))
       .filter((image) => image.dataUrl);
 
@@ -641,20 +619,35 @@ function ScanScreen({ onPending, onPendingBatch }) {
 
     setImageBatch(normalized);
     setPreview(normalized[0].dataUrl);
+    setSelectedImageDataUrl(normalized[0].dataUrl);
+    setActiveBatchImageId(normalized[0].id);
+    setOcrCrop(normalized[0].crop);
     setRawText("");
     setCandidate(null);
     setBatchCandidates([]);
 
-    if (normalized.length === 1) {
-      setSelectedImageDataUrl(normalized[0].dataUrl);
-      setStatus("请裁剪后识别");
-      setImageNotice("调整裁剪区域后，点击识别裁剪区域；也可以直接批量识别这一张。");
-      return;
-    }
+    setStatus(normalized.length === 1 ? "请裁剪后识别" : `已选择 ${normalized.length} 张`);
+    setImageNotice(normalized.length === 1
+      ? "裁剪区域已保存，识别时会读取框内内容。"
+      : "每张截图都可单独裁剪，点选缩略图切换。"
+    );
+  }
 
-    setSelectedImageDataUrl("");
-    setStatus(`已选择 ${normalized.length} 张`);
-    setImageNotice("可直接批量识别全部截图；单张裁剪请只选择一张图片。");
+  function selectBatchImage(imageId) {
+    const image = imageBatch.find((item) => item.id === imageId);
+    if (!image) return;
+    setActiveBatchImageId(image.id);
+    setPreview(image.dataUrl);
+    setSelectedImageDataUrl(image.dataUrl);
+    setOcrCrop(normalizeOcrCrop(image.crop || defaultOcrCrop));
+  }
+
+  function updateActiveImageCrop(nextCrop) {
+    const normalizedCrop = normalizeOcrCrop(nextCrop);
+    setOcrCrop(normalizedCrop);
+    setImageBatch((items) => items.map((item) => (
+      item.id === activeBatchImage?.id ? { ...item, crop: normalizedCrop } : item
+    )));
   }
 
   async function recognizeImageDataUrl(dataUrl) {
@@ -687,6 +680,18 @@ function ScanScreen({ onPending, onPendingBatch }) {
   async function readImageText(dataUrl) {
     const result = await XzbOcr.recognizeImage({ dataUrl });
     return String(result?.text || "").trim();
+  }
+
+  async function readBatchImageText(image) {
+    if (image?.uri) {
+      const result = await XzbOcr.recognizeUri({
+        uri: image.uri,
+        crop: normalizeOcrCrop(image.crop || defaultOcrCrop)
+      });
+      return String(result?.text || "").trim();
+    }
+    const croppedImage = await cropOcrImage(image.dataUrl, image.crop || defaultOcrCrop);
+    return readImageText(croppedImage);
   }
 
   async function handleImages(fileList) {
@@ -733,9 +738,25 @@ function ScanScreen({ onPending, onPendingBatch }) {
   }
 
   async function recognizeScreenshot() {
-    if (selectedImageDataUrl) {
-      const croppedImage = await cropOcrImage(selectedImageDataUrl, ocrCrop);
-      await recognizeImageDataUrl(croppedImage);
+    if (activeBatchImage) {
+      setStatus("正在识别裁剪区域");
+      setImageNotice("");
+      try {
+        const text = await readBatchImageText(activeBatchImage);
+        setRawText(text);
+        setImageBatch((items) => items.map((item) => (
+          item.id === activeBatchImage.id ? { ...item, text, status: text ? "已识别" : "无文字" } : item
+        )));
+        if (!text) {
+          setStatus("未识别到文字");
+          setImageNotice("裁剪区域内没有读到文字，请调整范围后重试。");
+          return;
+        }
+        recognizeFromText(text, "截图识别");
+      } catch (error) {
+        setStatus("识别失败");
+        setImageNotice(error?.message || "OCR 识别失败，请调整裁剪区域后重试。");
+      }
       return;
     }
 
@@ -771,7 +792,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
       );
 
       try {
-        const text = await readImageText(image.dataUrl);
+        const text = await readBatchImageText(image);
         const parsed = text ? parseExpenseText(text, expenseCategories) : null;
         setImageBatch((items) =>
           items.map((item) => (item.id === image.id ? { ...item, status: text ? "已识别" : "无文字", text } : item))
@@ -781,7 +802,8 @@ function ScanScreen({ onPending, onPendingBatch }) {
             ...parsed,
             id: createId(`batch-${index}`),
             source: "截图识别",
-            note: image.name || "",
+            note: "",
+            imageName: image.name || `截图 ${index + 1}`,
             rawText: text
           });
         }
@@ -811,6 +833,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
     onPendingBatch(validCandidates);
     setBatchCandidates([]);
     setImageBatch([]);
+    setActiveBatchImageId("");
     setSelectedImageDataUrl("");
     setPreview("");
     setRawText("");
@@ -909,6 +932,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
     setRawText("");
     setSelectedImageDataUrl("");
     setImageBatch([]);
+    setActiveBatchImageId("");
     setPreview("");
     setStatus("等待截图");
     setImageNotice("");
@@ -956,11 +980,11 @@ function ScanScreen({ onPending, onPendingBatch }) {
           {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
           <span>{status}</span>
         </label>
-        {selectedImageDataUrl && (
-          <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={setOcrCrop} />
-        )}
         {imageBatch.length > 0 && (
-          <BatchImageQueue images={imageBatch} />
+          <BatchImageQueue images={imageBatch} activeId={activeBatchImage?.id} onSelect={selectBatchImage} />
+        )}
+        {selectedImageDataUrl && (
+          <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={updateActiveImageCrop} />
         )}
         <textarea
           value={rawText}
@@ -1004,14 +1028,20 @@ function ScanScreen({ onPending, onPendingBatch }) {
   );
 }
 
-function BatchImageQueue({ images }) {
+function BatchImageQueue({ images, activeId, onSelect }) {
   return (
     <div className="batch-image-list">
       {images.map((image, index) => (
-        <div className="batch-image-item" key={image.id}>
+        <button
+          className={image.id === activeId ? "batch-image-item active" : "batch-image-item"}
+          key={image.id}
+          type="button"
+          onClick={() => onSelect(image.id)}
+        >
+          {image.dataUrl && <img src={image.dataUrl} alt="" />}
           <span>{image.name || `截图 ${index + 1}`}</span>
           <b>{image.status}</b>
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -1080,7 +1110,7 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
           return (
             <article className="batch-candidate-item" key={item.id}>
               <div className="batch-candidate-title">
-                <span>账单 {index + 1}</span>
+                <span>{item.imageName || `账单 ${index + 1}`}</span>
                 <b>{item.confidence}%</b>
               </div>
               <div className="batch-fields">
@@ -1123,12 +1153,26 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
                   </select>
                 </label>
                 <label>
+                  <span>付款方式</span>
+                  <select value={item.method || "其他"} onChange={(event) => updateCandidate(item.id, { method: event.target.value })}>
+                    {methods.map((method) => <option key={method} value={method}>{method}</option>)}
+                  </select>
+                </label>
+                <label>
                   <span>日期</span>
                   <input type="date" value={item.date} onChange={(event) => updateCandidate(item.id, { date: event.target.value })} />
                 </label>
                 <label>
                   <span>时间</span>
                   <input type="time" value={item.time} onChange={(event) => updateCandidate(item.id, { time: event.target.value })} />
+                </label>
+                <label className="batch-note-field">
+                  <span>备注</span>
+                  <textarea
+                    value={item.note || ""}
+                    placeholder="可选"
+                    onChange={(event) => updateCandidate(item.id, { note: event.target.value })}
+                  />
                 </label>
               </div>
             </article>
@@ -1182,6 +1226,9 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
       <Field label="分类">
         <CategoryGrid type={candidate.type} value={candidate.category} onChange={(category) => setCandidate({ ...candidate, category })} />
       </Field>
+      <Field label="付款方式">
+        <SegmentedControl value={candidate.method || "其他"} options={methods} onChange={(method) => setCandidate({ ...candidate, method })} />
+      </Field>
       <div className="two-columns">
         <Field label="日期">
           <input value={candidate.date} onChange={(event) => setCandidate({ ...candidate, date: event.target.value })} type="date" />
@@ -1190,6 +1237,13 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
           <input value={candidate.time} onChange={(event) => setCandidate({ ...candidate, time: event.target.value })} type="time" />
         </Field>
       </div>
+      <Field label="备注">
+        <textarea
+          value={candidate.note || ""}
+          placeholder="可选"
+          onChange={(event) => setCandidate({ ...candidate, note: event.target.value })}
+        />
+      </Field>
       <div className="form-actions">
         <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
         <button className="primary-button" type="button" onClick={onSave}>
@@ -1249,7 +1303,7 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
       <div
         ref={stageRef}
         className="ocr-crop-stage"
-        style={{ aspectRatio: imageRatio, maxWidth: imageRatio < 0.72 ? "230px" : "340px" }}
+        style={{ aspectRatio: imageRatio, maxWidth: imageRatio < 0.72 ? "300px" : "100%" }}
         onPointerMove={moveCrop}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
@@ -1272,7 +1326,7 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
           }}
           onPointerDown={(event) => startDrag(event, "move")}
         >
-          {["nw", "ne", "sw", "se"].map((corner) => (
+          {["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((corner) => (
             <button
               key={corner}
               className={`ocr-crop-handle ${corner}`}
@@ -1304,6 +1358,7 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
   );
   const comparison = getMonthComparison(stats.total, previousStats.total);
   const merchantRanking = useMemo(() => getMerchantRanking(expenses, stats.total), [expenses, stats.total]);
+  const paymentMethodTotals = useMemo(() => getPaymentMethodTotals(expenses, stats.total), [expenses, stats.total]);
   const budgetStatus = getBudgetStatus(stats, budget, selectedMonth, currentMonth);
 
   return (
@@ -1390,6 +1445,26 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
                   <div><i style={{ width: `${merchant.percent}%` }} /></div>
                 </div>
                 <b>{money(merchant.total)}</b>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="chart-panel">
+        <SectionTitle title="付款方式" aside={`${paymentMethodTotals.length} 种`} />
+        {paymentMethodTotals.length === 0 ? (
+          <EmptyLine text="本月还没有付款记录" />
+        ) : (
+          <div className="payment-method-list">
+            {paymentMethodTotals.map((item) => (
+              <div className="payment-method-row" key={item.name}>
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>{item.count} 笔 · {Math.round(item.percent)}%</span>
+                </div>
+                <b>{money(item.total)}</b>
+                <div className="payment-method-track"><i style={{ width: `${item.percent}%` }} /></div>
               </div>
             ))}
           </div>
@@ -1496,9 +1571,14 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
     } else {
       setSettings((current) => ({
         ...current,
-        categoryKeywordOverrides: {
-          ...(current.categoryKeywordOverrides || {}),
-          [categoryEditor.id]: keywords
+        categoryOverrides: {
+          ...(current.categoryOverrides || {}),
+          [categoryEditor.id]: {
+            name,
+            icon: categoryEditor.icon,
+            color: categoryEditor.color,
+            keywords
+          }
         }
       }));
     }
@@ -1667,7 +1747,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
             <div className="category-editor">
               <div className="category-editor-heading">
                 <div>
-                  <span>{categoryEditor.isNew ? "新分类" : categoryEditor.custom ? "编辑自定义分类" : "内置分类"}</span>
+                  <span>{categoryEditor.isNew ? "新分类" : categoryEditor.custom ? "编辑自定义分类" : "编辑内置分类"}</span>
                   <h3>{categoryEditor.isNew ? "设计分类" : categoryEditor.name}</h3>
                 </div>
                 <button className="ghost-button" type="button" aria-label="关闭分类编辑" onClick={() => setCategoryEditor(null)}>×</button>
@@ -1677,14 +1757,12 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
                 <input
                   value={categoryEditor.name}
                   maxLength="12"
-                  disabled={!categoryEditor.custom && !categoryEditor.isNew}
                   placeholder="例如：宠物"
                   onChange={(event) => setCategoryEditor({ ...categoryEditor, name: event.target.value })}
                 />
               </Field>
 
-              {(categoryEditor.custom || categoryEditor.isNew) && (
-                <div className="category-designer">
+              <div className="category-designer">
                   <div>
                     <span>图标</span>
                     <div className="icon-picker">
@@ -1718,7 +1796,6 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
                     </div>
                   </div>
                 </div>
-              )}
 
               <Field label="自动归类关键词">
                 <textarea
@@ -2168,6 +2245,27 @@ function getMerchantRanking(records, monthTotal) {
     .sort((a, b) => b.total - a.total || b.count - a.count);
 }
 
+function getPaymentMethodTotals(records, monthTotal) {
+  const grouped = new Map();
+  records
+    .filter((item) => item.type !== "income")
+    .forEach((item) => {
+      const name = String(item.method || "其他").trim() || "其他";
+      const current = grouped.get(name) || { name, total: 0, count: 0 };
+      current.total += Number(item.amount || 0);
+      current.count += 1;
+      grouped.set(name, current);
+    });
+
+  return Array.from(grouped.values())
+    .map((item) => ({
+      ...item,
+      percent: monthTotal ? Math.min(100, (item.total / monthTotal) * 100) : 0,
+      order: methods.indexOf(item.name)
+    }))
+    .sort((a, b) => b.total - a.total || (a.order < 0 ? methods.length : a.order) - (b.order < 0 ? methods.length : b.order));
+}
+
 function getBudgetStatus(stats, budget, selectedMonth, currentMonth) {
   const amount = Number(budget || 0);
   if (amount <= 0) {
@@ -2410,15 +2508,24 @@ function getCategory(categoryId, type = "expense", expenseCategories = categorie
   return source.find((entry) => entry.id === categoryId) || source.at(-1);
 }
 
-function mergeExpenseCategories(customCategories, categoryOrder = [], keywordOverrides = {}) {
+function mergeExpenseCategories(customCategories, categoryOrder = [], keywordOverrides = {}, categoryOverrides = {}) {
   const knownIds = new Set(categories.map((category) => category.id));
-  const builtIn = categories.map((category) => ({
-    ...category,
-    custom: false,
-    keywords: Array.isArray(keywordOverrides?.[category.id])
-      ? keywordOverrides[category.id].filter(Boolean)
-      : category.keywords
-  }));
+  const builtIn = categories.map((category) => {
+    const override = categoryOverrides?.[category.id] || {};
+    const overrideKeywords = Array.isArray(override.keywords)
+      ? override.keywords
+      : keywordOverrides?.[category.id];
+    return {
+      ...category,
+      name: String(override.name || category.name).slice(0, 12),
+      icon: override.icon || category.icon,
+      color: override.color || category.color,
+      custom: false,
+      keywords: Array.isArray(overrideKeywords)
+        ? overrideKeywords.filter(Boolean)
+        : category.keywords
+    };
+  });
   const validCustom = (Array.isArray(customCategories) ? customCategories : [])
     .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
     .map((category) => ({

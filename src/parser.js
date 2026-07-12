@@ -4,8 +4,8 @@ import { createId } from "./ids.js";
 const MONEY_VALUE = "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)";
 const amountRegexes = [
   new RegExp(`(?:￥|¥|RMB|CNY)\\s*${MONEY_VALUE}`, "i"),
+  /(?:-|−)\s*([0-9][0-9,]*\.[0-9]{1,2})(?=\s|元|$)/i,
   new RegExp(`(?:金额|付款金额|支付金额|交易金额|订单金额|实付|实付款|已付款|消费|支出|扣款|收款|收入|到账|退款)\\s*[:：]?\\s*(?:￥|¥|RMB|CNY)?\\s*${MONEY_VALUE}`, "i"),
-  new RegExp(`(?:付款成功|支付成功|交易成功|扣款成功|消费成功|收款成功|退款成功)[\\s\\S]{0,20}?(?:￥|¥)?\\s*${MONEY_VALUE}`, "i"),
   new RegExp(`${MONEY_VALUE}\\s*(?:元|CNY|RMB)`, "i")
 ];
 
@@ -21,12 +21,16 @@ const platformRules = [
 ];
 
 const merchantPatterns = [
-  /(?:收款方|收款账户|付款方|付款账户|商户名称|商户|商家|交易对象|交易对方|对方账户|对方|付款给|支付给|转账给)\s*[:：]?\s*([^\n￥¥,，。；;]+)/i,
+  /(?:收款方|收款账户|商户名称|商户全称|商户|商家名称|商家|店铺名称|交易对象|交易对方|对方账户|对方|商品名称|商品说明)\s*[:：]?\s*([^\n￥¥,，。；;]{2,40}?)(?=\s+(?:付款方式|支付方式|交易时间|付款时间|订单号|交易号|商户单号|交易单号|20[0-9]{2}[-/.年]|￥|¥)|$)/i,
   /向\s*([^\n￥¥,，。；;]+?)\s*(?:付款|支付|转账)/i,
-  /(?:微信支付|支付宝|付款成功|支付成功)\s*[-—]?\s*([^\n￥¥,，。；;]+?)\s*(?:付款|支付|消费|交易|收款)?(?:成功|￥|¥|$)/i
+  /(?:付款给|支付给|转账给)\s*([^\n￥¥,，。；;]+?)(?=\s+(?:付款|支付|转账|成功|￥|¥)|$)/i,
+  /(?:微信支付|支付宝)\s*[-—]?\s*([^\n￥¥,，。；;]+?)\s*(?:付款|支付|消费|交易|收款)(?:成功)?/i
 ];
 
 const uselessLinePattern = /付款成功|支付成功|交易成功|扣款成功|消费成功|收款成功|退款成功|微信|支付宝|￥|¥|RMB|CNY|金额|订单|单号|时间|账单|详情|银行卡|余额|零钱|使用.*支付|上午|下午|晚上|凌晨|昨天|今天|前天|付款方式|支付方式|商户单号|交易单号|当前状态|完成|成功|待确认/i;
+const merchantLabelPattern = /^(?:收款方|收款账户|商户名称|商户全称|商户|商家名称|商家|店铺名称|交易对象|交易对方|对方账户|对方|付款给|支付给|转账给|商品名称|商品说明|商品)\s*[:：]?\s*(.*)$/i;
+const merchantNoisePattern = /^(?:账单详情|交易详情|付款详情|订单详情|支付成功|付款成功|交易成功|扣款成功|消费成功|收款成功|退款成功|当前状态|交易状态|已完成|完成|查看详情|全部账单|服务详情|微信支付|支付宝|微信|付款方式.*|支付方式.*|交易时间.*|付款时间.*|创建时间.*|订单号.*|交易号.*|商户单号.*|交易单号.*|使用.*支付|零钱(?:通)?|余额(?:宝)?|银行卡|信用卡|储蓄卡|昨天.*|今天.*|前天.*|上午.*|下午.*|晚上.*|凌晨.*|待确认)$/i;
+const merchantStrongHintPattern = /店|商行|超市|便利|咖啡|餐饮|外卖|公司|企业|中心|医院|药房|地铁|公交|航空|酒店|宾馆|影院|科技|网络|水务|自来水|工作室|服务部|旗舰店|专营店/i;
 
 export function parseExpenseText(rawText, expenseCategories = categories) {
   const raw = normalizeOcrText(rawText);
@@ -202,43 +206,69 @@ function normalizeTime(value) {
 }
 
 function extractMerchant(compact, lines) {
-  for (const pattern of merchantPatterns) {
-    const match = compact.match(pattern);
-    if (match) {
-      const merchant = cleanMerchant(match[1]);
-      if (merchant !== "未识别商户") return merchant;
-    }
-  }
+  const candidates = [];
+  const addCandidate = (value, score, index = lines.length) => {
+    const merchant = cleanMerchant(value);
+    if (!isMerchantCandidate(merchant)) return;
+    candidates.push({ merchant, score, index });
+  };
 
-  for (let index = 0; index < lines.length; index += 1) {
-    if (/收款方|付款方|商户名称|商户|商家|交易对象|交易对方|对方|付款给|支付给|转账给/.test(lines[index])) {
-      const sameLine = lines[index].split(/[:：]/).slice(1).join(":");
-      const nextLine = lines[index + 1] || "";
-      const merchant = cleanMerchant(sameLine || nextLine);
-      if (merchant !== "未识别商户") return merchant;
+  lines.forEach((line, index) => {
+    const labelMatch = line.match(merchantLabelPattern);
+    if (!labelMatch) return;
+    if (labelMatch[1]) addCandidate(labelMatch[1], 140, index);
+    for (let offset = 1; offset <= 3 && index + offset < lines.length; offset += 1) {
+      const nextLine = lines[index + offset];
+      const beforeCount = candidates.length;
+      addCandidate(nextLine, 132 - offset * 6, index + offset);
+      if (candidates.length > beforeCount) break;
     }
-  }
-
-  const usefulLine = lines.find((line) => {
-    if (uselessLinePattern.test(line)) return false;
-    if (/[0-9]{4}|[0-9]{1,2}[:：][0-9]{2}|[￥¥]/.test(line)) return false;
-    return line.length >= 2 && line.length <= 24;
   });
 
-  return usefulLine ? cleanMerchant(usefulLine) : "未识别商户";
+  for (const pattern of merchantPatterns) {
+    const match = compact.match(pattern);
+    if (match) addCandidate(match[1], 104);
+  }
+
+  lines.forEach((line, index) => {
+    if (merchantLabelPattern.test(line)) return;
+    let score = 38;
+    if (merchantStrongHintPattern.test(line)) score += 24;
+    if (index <= 5) score += 8 - index;
+    if (/公司|企业|店|中心|医院|商行|旗舰店|专营店/.test(line)) score += 10;
+    const previousLine = lines[index - 1] || "";
+    const nextLine = lines[index + 1] || "";
+    if (/[￥¥]\s*[0-9]|金额|实付/.test(previousLine) || /[￥¥]\s*[0-9]|金额|实付/.test(nextLine)) score += 16;
+    addCandidate(line, score, index);
+  });
+
+  candidates.sort((a, b) => b.score - a.score || a.index - b.index || a.merchant.length - b.merchant.length);
+  return candidates[0]?.merchant || "未识别商户";
 }
 
 function cleanMerchant(value) {
   const cleaned = String(value || "")
-    .replace(/(付款方|付款账户|收款方|收款账户|付款|支付|成功|消费|收款|账单|截图|OCR|微信支付|支付宝|商户名称|商户|交易对象|交易对方|对方账户|对方)/g, "")
-    .replace(/(使用|零钱支付|余额支付|账单详情|查看详情|详情|完成)/g, "")
+    .replace(/^(?:付款方|付款账户|收款方|收款账户|商户名称|商户全称|商户|商家名称|商家|店铺名称|交易对象|交易对方|对方账户|对方|付款给|支付给|转账给|商品名称|商品说明|商品)\s*[:：]?\s*/i, "")
+    .replace(/\s+(?:付款方式|支付方式|交易时间|付款时间|订单号|交易号|商户单号|交易单号)\s*[:：]?.*$/i, "")
+    .replace(/\s*(?:付款成功|支付成功|交易成功|收款成功|查看详情|详情|完成)\s*$/i, "")
     .replace(/[0-9]{4}[-/.年][0-9]{1,2}[-/.月][0-9]{1,2}日?/g, "")
     .replace(/[0-9]{1,2}[:：][0-9]{2}/g, "")
-    .replace(/[：:，,。；;￥¥]/g, "")
+    .replace(/[￥¥]\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/g, "")
+    .replace(/\s+[-+]?[0-9][0-9,]*\.[0-9]{1,2}\s*$/g, "")
+    .replace(/^[：:，,。；;\-—\s]+|[：:，,。；;\-—\s]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!cleaned || uselessLinePattern.test(cleaned)) return "未识别商户";
-  return cleaned.slice(0, 24);
+  return cleaned.slice(0, 32) || "未识别商户";
+}
+
+function isMerchantCandidate(value) {
+  if (!value || value === "未识别商户") return false;
+  if (value.length < 2 || value.length > 32) return false;
+  if (merchantNoisePattern.test(value)) return false;
+  if (!/[A-Za-z\u4e00-\u9fff]/.test(value)) return false;
+  if (/^[0-9\s()+\-*/.]+$/.test(value)) return false;
+  if (/[￥¥]|\b20[0-9]{2}[-/.年]/.test(value)) return false;
+  return true;
 }
 
 function scoreConfidence(candidate) {

@@ -937,8 +937,8 @@ body[data-theme="dark"] .cover-data-area {
 
 .ocr-crop-handle {
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
   border: 2px solid var(--primary);
   border-radius: 50%;
   background: #fff;
@@ -949,9 +949,13 @@ body[data-theme="dark"] .cover-data-area {
 }
 
 .ocr-crop-handle.nw { left: 0; top: 0; }
+.ocr-crop-handle.n { left: 50%; top: 0; }
 .ocr-crop-handle.ne { left: 100%; top: 0; }
-.ocr-crop-handle.sw { left: 0; top: 100%; }
+.ocr-crop-handle.e { left: 100%; top: 50%; }
 .ocr-crop-handle.se { left: 100%; top: 100%; }
+.ocr-crop-handle.s { left: 50%; top: 100%; }
+.ocr-crop-handle.sw { left: 0; top: 100%; }
+.ocr-crop-handle.w { left: 0; top: 50%; }
 
 .crop-reset {
   justify-self: center;
@@ -967,7 +971,11 @@ body[data-theme="dark"] .cover-data-area {
 
 .batch-image-list {
   display: grid;
+  grid-auto-columns: minmax(118px, 1fr);
+  grid-auto-flow: column;
   gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .batch-image-item,
@@ -979,10 +987,40 @@ body[data-theme="dark"] .cover-data-area {
 }
 
 .batch-image-item {
-  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-content: initial;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-soft);
+  color: var(--text);
+  text-align: left;
+}
+
+.batch-image-item.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+}
+
+.batch-image-item img {
+  grid-row: 1 / 3;
+  width: 38px;
+  height: 50px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.batch-image-item span,
+.batch-image-item b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .batch-image-item b,
@@ -1056,7 +1094,8 @@ body[data-theme="dark"] .cover-data-area {
 }
 
 .batch-fields input,
-.batch-fields select {
+.batch-fields select,
+.batch-fields textarea {
   width: 100%;
   min-height: 40px;
   border: 1px solid var(--line);
@@ -1065,6 +1104,16 @@ body[data-theme="dark"] .cover-data-area {
   color: var(--text);
   padding: 0 10px;
   font: inherit;
+}
+
+.batch-fields textarea {
+  min-height: 64px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.batch-fields .batch-note-field {
+  grid-column: 1 / -1;
 }
 
 .report-summary {
@@ -1323,6 +1372,49 @@ body[data-theme="dark"] .cover-data-area {
 
 .merchant-rank-item > b:last-child {
   font-size: 13px;
+}
+
+.payment-method-list {
+  display: grid;
+  gap: 14px;
+}
+
+.payment-method-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  align-items: center;
+}
+
+.payment-method-row strong,
+.payment-method-row span {
+  display: block;
+}
+
+.payment-method-row strong,
+.payment-method-row > b {
+  font-size: 14px;
+}
+
+.payment-method-row span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.payment-method-track {
+  grid-column: 1 / -1;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.payment-method-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
 }
 
 .category-report {
