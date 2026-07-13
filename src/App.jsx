@@ -1525,6 +1525,20 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   const customCategories = settings.customExpenseCategories || [];
   const expenseCategories = useContext(ExpenseCategoriesContext);
 
+  useEffect(() => {
+    if (!categoryEditor) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setCategoryEditor(null);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [Boolean(categoryEditor)]);
+
   async function uploadCover(file) {
     if (!file) return;
     const dataUrl = await readFileAsDataUrl(file);
@@ -1758,7 +1772,16 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
           </button>
 
           {categoryEditor && (
-            <div className="category-editor">
+            <div
+              className="category-editor-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-label={categoryEditor.isNew ? "添加消费分类" : `编辑${categoryEditor.name}`}
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) setCategoryEditor(null);
+              }}
+            >
+            <section className="category-editor">
               <div className="category-editor-heading">
                 <div>
                   <span>{categoryEditor.isNew ? "新分类" : categoryEditor.custom ? "编辑自定义分类" : "编辑内置分类"}</span>
@@ -1825,6 +1848,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
                   <CheckIcon /> 保存
                 </button>
               </div>
+            </section>
             </div>
           )}
         </section>
