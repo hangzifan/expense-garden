@@ -1395,7 +1395,7 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
     const selected = strip?.querySelector(".daily-spend-day.active");
     if (!strip || !selected) return;
     strip.scrollTo({
-      left: Math.max(0, selected.offsetLeft - (strip.clientWidth - selected.clientWidth) / 2),
+      left: Math.max(0, selected.offsetLeft + selected.clientWidth - strip.clientWidth),
       behavior: "smooth"
     });
   }, [selectedDay]);
@@ -2081,6 +2081,64 @@ function DailyExpenseList({ items }) {
   );
 }
 
+function GroupedExpenseList({ items, onEdit, onDelete }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  const groups = useMemo(() => {
+    const grouped = new Map();
+    items.forEach((item) => {
+      const date = item.date || "未填写日期";
+      const current = grouped.get(date) || [];
+      current.push(item);
+      grouped.set(date, current);
+    });
+    return Array.from(grouped.entries());
+  }, [items]);
+
+  if (!groups.length) return <EmptyLine text="还没有记录" />;
+
+  return (
+    <div className="grouped-expense-list">
+      {groups.map(([date, dayItems]) => {
+        const expenseTotal = dayItems
+          .filter((item) => item.type !== "income")
+          .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+        return (
+          <section className="bill-day-group" key={date}>
+            <header>
+              <strong>{formatBillDayLabel(date)}</strong>
+              <span>支出 {money(expenseTotal)}</span>
+            </header>
+            <div>
+              {dayItems.map((item) => {
+                const category = getCategory(item.category, item.type, expenseCategories);
+                return (
+                  <article className={item.type === "income" ? "grouped-expense-row income-row" : "grouped-expense-row"} key={item.id}>
+                    <span className="expense-category-icon" style={{ color: category.color }}>
+                      <CategoryIcon name={category.icon} size={19} />
+                    </span>
+                    <div>
+                      <strong>{item.merchant}</strong>
+                      <span>{item.time || "--:--"} · {category.name} · {item.method || "其他"}</span>
+                      {item.note && <em className="expense-note">{item.note}</em>}
+                    </div>
+                    <b>{signedMoney(item.amount, item.type)}</b>
+                    <button type="button" className="row-icon" aria-label={`编辑 ${item.merchant}`} onClick={() => onEdit(item)}>
+                      <EditIcon />
+                    </button>
+                    <button type="button" className="row-icon" aria-label={`删除 ${item.merchant}`} onClick={() => onDelete(item)}>
+                      <TrashIcon />
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function BottomNav({ activeTab, onTab }) {
   return (
     <nav className="bottom-nav" aria-label="主导航">
@@ -2159,6 +2217,19 @@ function MonthPicker({ value, max, onChange }) {
   );
 }
 
+function CompactMonthPicker({ value, max, onChange }) {
+  return (
+    <div className="compact-month-picker">
+      <button type="button" onClick={() => onChange(shiftMonth(value, -1))} aria-label="上个月">‹</button>
+      <label>
+        <span>{formatMonthLabel(value)}</span>
+        <input type="month" value={value} max={max} onChange={(event) => onChange(event.target.value || max)} />
+      </label>
+      <button type="button" onClick={() => onChange(shiftMonth(value, 1))} disabled={value >= max} aria-label="下个月">›</button>
+    </div>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <label className="field">
@@ -2224,7 +2295,7 @@ function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
   );
 }
 
-function TrendChart({ days, previousDays = [] }) {
+function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) {
   const visibleLength = Math.max(days.length, previousDays.length, 1);
   const max = Math.max(...days.map((day) => day.total), ...previousDays.map((day) => day.total), 1);
   const buildPoints = (source) => source
@@ -2246,7 +2317,23 @@ function TrendChart({ days, previousDays = [] }) {
       {days.map((day, index) => {
         const x = 14 + (index / Math.max(visibleLength - 1, 1)) * 252;
         const y = 104 - (day.total / max) * 78;
-        return <circle key={day.date} cx={x} cy={y} r="2.8" />;
+        const selected = day.date === selectedDay;
+        return (
+          <g
+            className={selected ? "trend-day selected" : "trend-day"}
+            key={day.date}
+            role="button"
+            tabIndex="0"
+            aria-label={`${formatDailyLabel(day.date)}，支出 ${money(day.total)}`}
+            onClick={() => onDaySelect?.(day.date)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") onDaySelect?.(day.date);
+            }}
+          >
+            <circle className="trend-hit-area" cx={x} cy={y} r="8" />
+            <circle className="trend-point" cx={x} cy={y} r={selected ? "4" : "2.8"} />
+          </g>
+        );
       })}
       <text x="14" y="122">1日</text>
       <text x="255" y="122" textAnchor="end">{visibleLength}日</text>
@@ -2605,6 +2692,17 @@ function formatDailyLabel(value) {
   const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
   const date = new Date(year, month - 1, day);
   return `${month} 月 ${day} 日 ${weekday[date.getDay()]}`;
+}
+
+function formatWeekdayShort(value) {
+  const [year, month, day] = String(value || today()).split("-").map(Number);
+  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][new Date(year, month - 1, day).getDay()];
+}
+
+function formatBillDayLabel(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value;
+  const [, month, day] = value.split("-");
+  return `${Number(month)} 月 ${Number(day)} 日 · ${formatWeekdayShort(value)}`;
 }
 
 function getDefaultReportDay(days, selectedMonth, currentMonth) {

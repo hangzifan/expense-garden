@@ -58,6 +58,9 @@ button {
   width: min(100%, 430px);
   height: min(900px, calc(100vh - 32px));
   min-height: 720px;
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  padding-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   position: relative;
   display: flex;
   flex-direction: column;
@@ -1899,7 +1902,7 @@ body[data-theme="dark"] .cover-data-area {
   position: relative;
   flex: 0 0 76px;
   width: auto;
-  margin: 0 14px 14px;
+  margin: 0 14px calc(14px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   height: 76px;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -1927,6 +1930,430 @@ body[data-theme="dark"] .cover-data-area {
   color: var(--primary);
 }
 
+/* Report layout A: one clear overview, then continuous analytical sections. */
+.report-screen {
+  padding-bottom: 32px;
+}
+
+.report-heading {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.report-heading > div:first-child {
+  min-width: 0;
+}
+
+.report-heading h2 {
+  margin-top: 3px;
+  font-size: 23px;
+}
+
+.compact-month-picker {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 32px auto 32px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.compact-month-picker button {
+  width: 32px;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 19px;
+}
+
+.compact-month-picker button:disabled {
+  opacity: 0.3;
+}
+
+.compact-month-picker label {
+  position: relative;
+  min-width: 92px;
+  text-align: center;
+}
+
+.compact-month-picker span {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.compact-month-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+.report-overview {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.report-primary-metric > span,
+.report-secondary-metrics span,
+.report-budget span,
+.report-budget small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-primary-metric > strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 36px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.report-primary-metric > em {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.report-overview .negative {
+  color: #c45c5c;
+}
+
+.report-overview .positive {
+  color: #4f9d75;
+}
+
+.report-secondary-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 16px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.report-secondary-metrics > div + div {
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.report-secondary-metrics strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.report-budget {
+  margin-top: 14px;
+}
+
+.report-budget > div:first-child,
+.report-budget small {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-budget > div:first-child b {
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.report-budget-track {
+  height: 7px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.report-budget-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+.report-budget.warning .report-budget-track i {
+  background: #d6a94f;
+}
+
+.report-budget.danger .report-budget-track i {
+  background: #c45c5c;
+}
+
+.report-budget p {
+  margin: 9px 0 5px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.report-section {
+  padding: 2px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.report-section > .section-title {
+  margin-top: 20px;
+}
+
+.report-trend-section {
+  padding-top: 4px;
+}
+
+.report-trend-section .trend-chart {
+  height: 176px;
+}
+
+.trend-day {
+  cursor: pointer;
+  outline: none;
+}
+
+.trend-hit-area {
+  fill: transparent;
+  stroke: none;
+}
+
+.trend-chart .trend-point {
+  fill: var(--surface);
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+
+.trend-day.selected .trend-point {
+  fill: var(--primary);
+  stroke: var(--surface);
+  stroke-width: 2.5;
+}
+
+.daily-spend-panel {
+  overflow: hidden;
+}
+
+.daily-spend-panel .section-title {
+  margin-top: 20px;
+}
+
+.daily-spend-strip {
+  grid-auto-columns: 64px;
+  gap: 4px;
+  padding: 0 0 8px;
+  scrollbar-width: none;
+}
+
+.daily-spend-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.daily-spend-day {
+  min-height: 74px;
+  padding: 7px 4px 8px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 1px;
+}
+
+.daily-spend-day span {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.daily-spend-day small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.daily-spend-day strong {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.daily-spend-day.active {
+  border-color: var(--primary);
+  background: transparent;
+  box-shadow: none;
+}
+
+.daily-spend-day.active span,
+.daily-spend-day.active small,
+.daily-spend-day.active strong {
+  color: var(--primary);
+}
+
+.daily-spend-summary {
+  padding: 15px 0 11px;
+  border-top: 0;
+}
+
+.daily-spend-summary strong {
+  font-size: 28px;
+}
+
+.daily-expense-list {
+  border-top: 1px solid var(--line);
+}
+
+.daily-expense-row {
+  min-height: 62px;
+}
+
+.report-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.report-tabs button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-tabs button.active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 2px 8px rgba(31, 43, 38, 0.08);
+}
+
+.report-analysis .merchant-ranking,
+.report-analysis .payment-method-list,
+.report-analysis .category-report {
+  min-height: 116px;
+}
+
+.report-analysis .category-report {
+  padding-top: 6px;
+}
+
+.donut span {
+  display: grid;
+  place-items: center;
+  line-height: 1.1;
+}
+
+.donut span b {
+  font-size: 20px;
+}
+
+.donut span small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.report-insights {
+  display: grid;
+}
+
+.report-insights .insight {
+  min-height: 44px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.report-insights .insight:last-child {
+  border-bottom: 0;
+}
+
+.grouped-expense-list {
+  display: grid;
+  gap: 18px;
+}
+
+.bill-day-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bill-day-group > header strong {
+  font-size: 14px;
+}
+
+.bill-day-group > header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.grouped-expense-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto 32px 32px;
+  align-items: center;
+  gap: 8px;
+  min-height: 66px;
+  border-bottom: 1px solid var(--line);
+}
+
+.grouped-expense-row > div {
+  min-width: 0;
+}
+
+.grouped-expense-row strong,
+.grouped-expense-row span {
+  display: block;
+}
+
+.grouped-expense-row strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grouped-expense-row span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.grouped-expense-row > b {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.grouped-expense-row.income-row > b {
+  color: #4f9d75;
+}
+
+.grouped-expense-row .row-icon {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+}
+
 @media (max-width: 520px) {
   .app-shell {
     padding: 0;
@@ -1934,8 +2361,8 @@ body[data-theme="dark"] .cover-data-area {
 
   .phone-frame {
     width: 100%;
-    height: 100vh;
-    min-height: 100vh;
+    height: 100dvh;
+    min-height: 100dvh;
     border: 0;
     border-radius: 0;
   }
@@ -1976,5 +2403,29 @@ body[data-theme="dark"] .cover-data-area {
 
   .category-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .report-screen {
+    padding: 18px 16px 28px;
+  }
+
+  .compact-month-picker {
+    grid-template-columns: 28px auto 28px;
+  }
+
+  .compact-month-picker button {
+    width: 28px;
+  }
+
+  .compact-month-picker label {
+    min-width: 82px;
+  }
+
+  .compact-month-picker span {
+    font-size: 11px;
+  }
+
+  .report-overview {
+    padding: 16px;
   }
 }
