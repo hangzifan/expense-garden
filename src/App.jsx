@@ -318,7 +318,11 @@ function App() {
             setActiveTab("home");
           }} />
         )}
-        {activeTab === "scan" && <ScanScreen onPending={addPending} onPendingBatch={addPendingBatch} />}
+        <ScanScreen
+          hidden={activeTab !== "scan"}
+          onPending={addPending}
+          onPendingBatch={addPendingBatch}
+        />
         {activeTab === "report" && (
           <ReportScreen
             stats={stats}
@@ -528,7 +532,7 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
   );
 }
 
-function ScanScreen({ onPending, onPendingBatch }) {
+function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
   const [rawText, setRawText] = useState("");
   const [candidate, setCandidate] = useState(null);
@@ -941,7 +945,7 @@ function ScanScreen({ onPending, onPendingBatch }) {
   }
 
   return (
-    <Screen>
+    <Screen hidden={hidden}>
       <header className="screen-heading">
         <p>导入截图</p>
         <h2>识别后确认</h2>
@@ -1361,6 +1365,8 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
 
 function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, currentMonth, onMonthChange, onEdit, onDelete }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const [selectedDay, setSelectedDay] = useState(() => getDefaultReportDay(stats.days, selectedMonth, currentMonth));
+  const dailyStripRef = useRef(null);
   const previousMonth = shiftMonth(selectedMonth, -1);
   const previousExpenses = useMemo(
     () => sortRecordsByDateTime(allExpenses.filter((item) => item.date?.startsWith(previousMonth))),
@@ -1374,6 +1380,25 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
   const merchantRanking = useMemo(() => getMerchantRanking(expenses, stats.total), [expenses, stats.total]);
   const paymentMethodTotals = useMemo(() => getPaymentMethodTotals(expenses, stats.total), [expenses, stats.total]);
   const budgetStatus = getBudgetStatus(stats, budget, selectedMonth, currentMonth);
+  const selectedDayExpenses = useMemo(
+    () => expenses.filter((item) => item.type !== "income" && item.date === selectedDay),
+    [expenses, selectedDay]
+  );
+  const selectedDayTotal = selectedDayExpenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
+  useEffect(() => {
+    setSelectedDay(getDefaultReportDay(stats.days, selectedMonth, currentMonth));
+  }, [selectedMonth, currentMonth]);
+
+  useEffect(() => {
+    const strip = dailyStripRef.current;
+    const selected = strip?.querySelector(".daily-spend-day.active");
+    if (!strip || !selected) return;
+    strip.scrollTo({
+      left: Math.max(0, selected.offsetLeft - (strip.clientWidth - selected.clientWidth) / 2),
+      behavior: "smooth"
+    });
+  }, [selectedDay]);
 
   return (
     <Screen>
@@ -1397,6 +1422,32 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
           <span>本月结余</span>
           <strong>{money(stats.balance)}</strong>
         </div>
+      </section>
+
+      <section className="chart-panel daily-spend-panel">
+        <SectionTitle title="每日消费" aside={formatDailyLabel(selectedDay)} />
+        <div className="daily-spend-strip" ref={dailyStripRef}>
+          {stats.days.map((day) => (
+            <button
+              type="button"
+              className={day.date === selectedDay ? "daily-spend-day active" : "daily-spend-day"}
+              key={day.date}
+              onClick={() => setSelectedDay(day.date)}
+              aria-pressed={day.date === selectedDay}
+            >
+              <span>{Number(day.date.slice(-2))} 日</span>
+              <strong>{money(day.total)}</strong>
+            </button>
+          ))}
+        </div>
+        <div className="daily-spend-summary">
+          <div>
+            <span>当天支出</span>
+            <strong>{money(selectedDayTotal)}</strong>
+          </div>
+          <b>{selectedDayExpenses.length} 笔</b>
+        </div>
+        <DailyExpenseList items={selectedDayExpenses} />
       </section>
 
       <section className="chart-panel">
@@ -2004,6 +2055,32 @@ function ExpenseList({ items, onEdit, onDelete }) {
   );
 }
 
+function DailyExpenseList({ items }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  if (!items.length) return <EmptyLine text="当天没有消费记录" />;
+
+  return (
+    <div className="daily-expense-list">
+      {items.map((item) => {
+        const category = getCategory(item.category, item.type, expenseCategories);
+        return (
+          <div className="daily-expense-row" key={item.id}>
+            <span className="expense-category-icon" style={{ color: category.color }}>
+              <CategoryIcon name={category.icon} size={18} />
+            </span>
+            <div>
+              <strong>{item.merchant}</strong>
+              <span>{item.time || "--:--"} · {category.name} · {item.method || "其他"}</span>
+              {item.note && <em className="expense-note">{item.note}</em>}
+            </div>
+            <b>-{money(item.amount)}</b>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BottomNav({ activeTab, onTab }) {
   return (
     <nav className="bottom-nav" aria-label="主导航">
@@ -2043,8 +2120,8 @@ function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
   );
 }
 
-function Screen({ children, className = "" }) {
-  return <div className={`screen ${className}`.trim()}>{children}</div>;
+function Screen({ children, className = "", hidden = false }) {
+  return <div className={`screen ${className}`.trim()} hidden={hidden}>{children}</div>;
 }
 
 function SectionTitle({ title, aside }) {
@@ -2520,6 +2597,20 @@ function formatReadableDate(value) {
 function formatMonthLabel(value) {
   const [year, month] = String(value || today().slice(0, 7)).split("-");
   return `${year} 年 ${Number(month)} 月`;
+}
+
+function formatDailyLabel(value) {
+  if (!value) return "请选择日期";
+  const [year, month, day] = value.split("-").map(Number);
+  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const date = new Date(year, month - 1, day);
+  return `${month} 月 ${day} 日 ${weekday[date.getDay()]}`;
+}
+
+function getDefaultReportDay(days, selectedMonth, currentMonth) {
+  if (selectedMonth === currentMonth) return today();
+  const spendingDays = (days || []).filter((day) => day.total > 0);
+  return spendingDays.at(-1)?.date || days?.at(-1)?.date || `${selectedMonth}-01`;
 }
 
 function shiftMonth(value, offset) {
