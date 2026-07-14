@@ -2318,6 +2318,7 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
         const x = 14 + (index / Math.max(visibleLength - 1, 1)) * 252;
         const y = 104 - (day.total / max) * 78;
         const selected = day.date === selectedDay;
+        const showPoint = day.total > 0 || selected;
         return (
           <g
             className={selected ? "trend-day selected" : "trend-day"}
@@ -2331,7 +2332,7 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
             }}
           >
             <circle className="trend-hit-area" cx={x} cy={y} r="8" />
-            <circle className="trend-point" cx={x} cy={y} r={selected ? "4" : "2.8"} />
+            {showPoint && <circle className="trend-point" cx={x} cy={y} r={selected ? "4" : "2.8"} />}
           </g>
         );
       })}

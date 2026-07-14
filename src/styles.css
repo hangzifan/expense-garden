@@ -2121,7 +2121,7 @@ body[data-theme="dark"] .cover-data-area {
   outline: none;
 }
 
-.trend-hit-area {
+.trend-chart .trend-hit-area {
   fill: transparent;
   stroke: none;
 }
