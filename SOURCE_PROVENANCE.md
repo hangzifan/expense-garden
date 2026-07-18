@@ -1,7 +1,7 @@
-# Source provenance for v1.21
+# Source provenance for v1.22
 
-- Status: `reconstructed`
-- Historical date: `2026-07-14T20:03:14+08:00`
-- Evidence: Retained successful file-operation log.
+- Status: `build-only`
+- Historical date: `2026-07-18T11:56:36+08:00`
+- Evidence: Original JSX history is unavailable; compiled public assets are extracted from the preserved APK.
 
 This repository history was reconstructed in chronological order from retained successful file-operation logs, source archives, generated assets and preserved APK web payloads. An archive/reconstructed tag does not claim byte-for-byte reproducibility unless explicitly stated.
