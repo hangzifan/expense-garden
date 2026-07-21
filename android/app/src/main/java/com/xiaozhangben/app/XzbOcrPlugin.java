@@ -203,9 +203,6 @@ public class XzbOcrPlugin extends Plugin {
         if (call == null) {
             return;
         }
-        for (Uri uri : uris) {
-            persistReadPermission(data, uri);
-        }
 
         Intent data = result.getData();
         if (result.getResultCode() != Activity.RESULT_OK || data == null) {
@@ -217,6 +214,9 @@ public class XzbOcrPlugin extends Plugin {
         if (uris.isEmpty()) {
             call.reject("没有读到图片内容");
             return;
+        }
+        for (Uri uri : uris) {
+            persistReadPermission(data, uri);
         }
 
         TextRecognizer recognizer = TextRecognition.getClient(

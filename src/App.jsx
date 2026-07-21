@@ -1,12 +1,15 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor, registerPlugin, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { loadState, readFileAsDataUrl, saveState } from "./storage.js";
 import { parseExpenseText } from "./parser.js";
+import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
+import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
 import { createId } from "./ids.js";
+import { Search } from "lucide-react";
+import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
 import {
   ChartIcon,
-  CategoryIcon,
   CheckIcon,
   EditIcon,
   GripIcon,
@@ -19,6 +22,7 @@ import {
 } from "./icons.jsx";
 
 const ExpenseCategoriesContext = React.createContext(categories);
+const IncomeCategoriesContext = React.createContext(incomeCategories);
 
 const navItems = [
   { id: "home", label: "首页", icon: WalletIcon },
@@ -32,16 +36,6 @@ const XzbOcr = registerPlugin("XzbOcr");
 const XzbNotify = registerPlugin("XzbNotify");
 const recordTypeLabels = { expense: "支出", income: "收入" };
 const defaultOcrCrop = { x: 4, y: 4, width: 92, height: 92 };
-const categoryIconOptions = [
-  { id: "tag", name: "标签" },
-  { id: "home", name: "居家" },
-  { id: "water", name: "用水" },
-  { id: "travel", name: "出行" },
-  { id: "gift", name: "礼物" },
-  { id: "fun", name: "娱乐" },
-  { id: "health", name: "健康" },
-  { id: "study", name: "学习" }
-];
 const categoryColors = ["#6f927d", "#4d9fc5", "#ee775d", "#d6a94f", "#d86d84", "#4f77b8", "#9a7ac2", "#7b837d"];
 
 const emptyDraft = () => ({
@@ -55,32 +49,53 @@ const emptyDraft = () => ({
   note: ""
 });
 
-function normalizeNotificationItems(items, expenseCategories = categories) {
+function normalizeNotificationItems(items, expenseCategories = categories, merchantHistory = []) {
   return (Array.isArray(items) ? items : [])
     .map((item, index) => {
       const rawText = String(item?.rawText || "").trim();
-      if (!rawText) return null;
-      const parsed = parseExpenseText(rawText, expenseCategories);
+      if (!rawText && !Number(item?.amount)) return null;
+      const base = parseExpenseText(rawText, expenseCategories);
+      const explicitMerchant = String(item?.merchant || "").trim();
+      const parsed = refineWithMerchantMemory(
+        {
+          ...base,
+          ...(Number(item?.amount) > 0 ? { amount: Number(item.amount) } : {}),
+          ...(explicitMerchant && explicitMerchant !== "未识别商户" ? { merchant: explicitMerchant } : {}),
+          ...(item?.category ? { category: item.category } : {})
+        },
+        rawText,
+        merchantHistory
+      );
       const method = item?.packageName === "com.eg.android.AlipayGphone"
         ? "支付宝"
         : item?.packageName === "com.tencent.mm"
           ? "微信"
           : parsed.method;
+      const suggestions = Array.isArray(item?.merchantSuggestions)
+        ? item.merchantSuggestions
+        : parsed.merchantSuggestions || [];
+      const merchantMissing = !parsed.merchant || parsed.merchant === "未识别商户";
 
       return {
         ...parsed,
         id: item?.id ? `notice-${item.id}` : createId(`notice-${index}`),
+        notificationId: item?.id || "",
         method,
-        source: "通知识别",
+        source: item?.source || "通知识别",
         rawText,
-        note: parsed.merchant === "未识别商户"
-          ? "通知未包含明确商户，请核对"
-          : "来自系统通知"
+        merchantMissing,
+        merchantSuggestions: suggestions,
+        quickConfirmed: Boolean(item?.quickConfirmed),
+        merchantPrediction: Boolean(item?.merchantPrediction),
+        note: merchantMissing
+          ? "通知未包含明确商户，请从候选中选择或手动填写"
+          : item?.merchantPrediction
+            ? "商户由历史消费习惯推测，请确认"
+            : ""
       };
     })
     .filter(Boolean);
 }
-
 function normalizePendingEntry(entry, index = 0) {
   if (!entry) return null;
   const type = entry.type === "income" ? "income" : "expense";
@@ -159,6 +174,18 @@ function App() {
       settings.categoryOverrides
     ]
   );
+  const incomeCategoryList = useMemo(
+    () => mergeIncomeCategories(
+      settings.customIncomeCategories,
+      settings.incomeCategoryOrder,
+      settings.incomeCategoryOverrides
+    ),
+    [
+      settings.customIncomeCategories,
+      settings.incomeCategoryOrder,
+      settings.incomeCategoryOverrides
+    ]
+  );
   const appState = useMemo(() => ({ expenses, pending, settings }), [expenses, pending, settings]);
   const currentMonth = today().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
@@ -167,8 +194,8 @@ function App() {
     [expenses, selectedMonth]
   );
   const stats = useMemo(
-    () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth, expenseCategories),
-    [monthlyExpenses, settings.budget, selectedMonth, expenseCategories]
+    () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth, expenseCategories, incomeCategoryList),
+    [monthlyExpenses, settings.budget, selectedMonth, expenseCategories, incomeCategoryList]
   );
 
   useEffect(() => {
@@ -179,7 +206,42 @@ function App() {
     document.documentElement.style.setProperty("--primary", theme.primary);
     document.documentElement.style.setProperty("--accent", theme.accent);
     document.body.dataset.theme = settings.darkMode ? "dark" : "light";
+    if (Capacitor.isNativePlatform()) {
+      SystemBars.setStyle({
+        style: settings.darkMode ? SystemBarsStyle.Dark : SystemBarsStyle.Light
+      }).catch(() => {});
+    }
   }, [theme, settings.darkMode]);
+
+  useEffect(() => {
+    if (!canUseNativeNotify) return undefined;
+    XzbNotify.updateMerchantProfiles({ profiles: buildNativeMerchantProfiles(expenses) }).catch(() => {});
+    return undefined;
+  }, [canUseNativeNotify, expenses]);
+
+  function ingestNotificationEntries(entries, options = {}) {
+    const normalized = Array.isArray(entries) ? entries : [];
+    const confirmed = normalized.filter((entry) => entry.quickConfirmed && Number(entry.amount) > 0);
+    const confirmedIds = new Set(confirmed.map((entry) => entry.notificationId).filter(Boolean));
+    if (confirmed.length) {
+      setPending((items) => items.filter((item) => !confirmedIds.has(item.notificationId)));
+      setExpenses((items) => {
+        const existingNotificationIds = new Set(items.map((item) => item.notificationId).filter(Boolean));
+        const additions = confirmed
+          .filter((entry) => !entry.notificationId || !existingNotificationIds.has(entry.notificationId))
+          .map((entry) => ({
+            ...entry,
+            id: createId("expense"),
+            source: "通知快捷确认",
+            note: entry.note || "已从通知快捷确认商户"
+          }));
+        return additions.length ? [...additions, ...items] : items;
+      });
+    }
+    const pendingEntries = normalized.filter((entry) => !entry.quickConfirmed && !confirmedIds.has(entry.notificationId));
+    if (pendingEntries.length) addPendingBatch(pendingEntries, options);
+    return { confirmedCount: confirmed.length, pendingCount: pendingEntries.length };
+  }
 
   useEffect(() => {
     if (!canUseNativeNotify) return undefined;
@@ -189,9 +251,14 @@ function App() {
       try {
         const enabled = await XzbNotify.isEnabled();
         if (stopped || !enabled?.enabled) return;
+        if (!enabled.connected) await XzbNotify.reconnect();
         const result = await XzbNotify.drainNotifications();
-        const entries = normalizeNotificationItems(result?.items || [], expenseCategories);
-        if (entries.length) addPendingBatch(entries, { navigate: false });
+        const entries = normalizeNotificationItems(
+          (result?.items || []).filter((item) => !item?.test),
+          expenseCategories,
+          expenses
+        );
+        if (entries.length) ingestNotificationEntries(entries, { navigate: false });
       } catch {
         // Notification access is optional; failed sync should never block bookkeeping.
       }
@@ -209,7 +276,7 @@ function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [canUseNativeNotify, expenseCategories]);
+  }, [canUseNativeNotify, expenseCategories, expenses]);
 
   function saveExpense(entry) {
     const type = entry.type === "income" ? "income" : "expense";
@@ -250,6 +317,7 @@ function App() {
   function editExpense(expense) {
     const type = expense.type === "income" ? "income" : "expense";
     setDraft({
+      ...expense,
       type,
       amount: String(expense.amount),
       merchant: expense.merchant,
@@ -293,6 +361,7 @@ function App() {
 
   return (
     <ExpenseCategoriesContext.Provider value={expenseCategories}>
+    <IncomeCategoriesContext.Provider value={incomeCategoryList}>
     <div className="app-shell">
       <main className="phone-frame">
         {activeTab === "home" && (
@@ -320,8 +389,10 @@ function App() {
         )}
         <ScanScreen
           hidden={activeTab !== "scan"}
+          merchantHistory={expenses}
           onPending={addPending}
           onPendingBatch={addPendingBatch}
+          onNotificationEntries={ingestNotificationEntries}
         />
         {activeTab === "report" && (
           <ReportScreen
@@ -361,6 +432,7 @@ function App() {
         <BottomNav activeTab={activeTab} onTab={setActiveTab} />
       </main>
     </div>
+    </IncomeCategoriesContext.Provider>
     </ExpenseCategoriesContext.Provider>
   );
 }
@@ -532,8 +604,9 @@ function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
   );
 }
 
-function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
+function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPendingBatch, onNotificationEntries }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   const [rawText, setRawText] = useState("");
   const [candidate, setCandidate] = useState(null);
   const [batchCandidates, setBatchCandidates] = useState([]);
@@ -548,26 +621,45 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
   const [notificationStatus, setNotificationStatus] = useState({
     enabled: false,
     connected: false,
+    recovering: false,
+    rebindRequestCount: 0,
+    quickConfirmEnabled: false,
+    profileCount: 0,
     lastSeenAt: 0,
     lastAcceptedAt: 0,
     lastReason: "never_seen",
     queueCount: 0
   });
   const [notificationNotice, setNotificationNotice] = useState("");
+  const [isNotificationTesting, setIsNotificationTesting] = useState(false);
+  const notificationRefreshInFlightRef = useRef(false);
   const canUseNativeOcr = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
   const canUseNativeNotify = canUseNativeOcr;
   const activeBatchImage = imageBatch.find((image) => image.id === activeBatchImageId) || imageBatch[0] || null;
+
+  function parseWithHistory(text) {
+    return refineWithMerchantMemory(
+      parseExpenseText(text, expenseCategories, incomeCategoryList),
+      text,
+      merchantHistory
+    );
+  }
 
   useEffect(() => {
     refreshNotificationPermission();
     const refreshOnReturn = () => {
       if (document.visibilityState === "visible") refreshNotificationPermission();
     };
+    const refreshOnFocus = () => refreshNotificationPermission({ silent: true });
+    const healthTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshNotificationPermission({ silent: true });
+    }, 20_000);
     document.addEventListener("visibilitychange", refreshOnReturn);
-    window.addEventListener("focus", refreshNotificationPermission);
+    window.addEventListener("focus", refreshOnFocus);
     return () => {
+      window.clearInterval(healthTimer);
       document.removeEventListener("visibilitychange", refreshOnReturn);
-      window.removeEventListener("focus", refreshNotificationPermission);
+      window.removeEventListener("focus", refreshOnFocus);
     };
   }, [canUseNativeNotify]);
 
@@ -799,7 +891,7 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
 
       try {
         const text = await readBatchImageText(image);
-        const parsed = text ? parseExpenseText(text, expenseCategories) : null;
+        const parsed = text ? parseWithHistory(text) : null;
         setImageBatch((items) =>
           items.map((item) => (item.id === image.id ? { ...item, status: text ? "已识别" : "无文字", text } : item))
         );
@@ -847,18 +939,46 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
     setImageNotice("");
   }
 
-  async function refreshNotificationPermission() {
-    if (!canUseNativeNotify) return;
+  async function refreshNotificationPermission({ silent = false } = {}) {
+    if (!canUseNativeNotify || notificationRefreshInFlightRef.current) return;
+    notificationRefreshInFlightRef.current = true;
     try {
-      const result = await XzbNotify.isEnabled();
+      let result = await XzbNotify.isEnabled();
+      if (result?.enabled && !result?.connected) {
+        result = await XzbNotify.reconnect();
+        for (const delay of [350, 700, 1_200]) {
+          if (result?.connected) break;
+          await new Promise((resolve) => window.setTimeout(resolve, delay));
+          result = await XzbNotify.isEnabled();
+        }
+      }
       setNotificationStatus((current) => ({ ...current, ...result }));
+      if (silent) return;
       if (result?.enabled && result?.connected) {
         setNotificationNotice("通知监听已连接，新的付款通知会进入待确认。");
       } else if (result?.enabled) {
-        setNotificationNotice("权限已开启，监听服务正在连接；可点“检查并同步”重试。");
+        setNotificationNotice("系统已授权，监听正在自动恢复。仍未恢复时，请把电池用量设为“不限制”。");
+      } else {
+        setNotificationNotice("尚未开启通知使用权，自动记账不会运行。");
       }
     } catch {
-      setNotificationStatus((current) => ({ ...current, enabled: false, connected: false }));
+      setNotificationStatus((current) => ({
+        ...current,
+        recovering: current.enabled && !current.connected
+      }));
+      if (!silent) setNotificationNotice("暂时无法读取监听状态，系统会继续在后台重试。");
+    } finally {
+      notificationRefreshInFlightRef.current = false;
+    }
+  }
+
+  async function openNotificationAppSettings() {
+    if (!canUseNativeNotify) return;
+    try {
+      await XzbNotify.openAppSettings();
+      setNotificationNotice("请在应用设置中允许后台运行，并把电池用量设为“不限制”，返回后会自动重连。");
+    } catch (error) {
+      setNotificationNotice(error?.message || "无法打开小账本的应用设置。");
     }
   }
 
@@ -868,6 +988,7 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
       return;
     }
     try {
+      await XzbNotify.requestQuickConfirmPermission().catch(() => {});
       await XzbNotify.openSettings();
       setNotificationNotice("已打开系统设置。开启小账本后直接返回，App 会自动检查监听状态。");
     } catch (error) {
@@ -897,16 +1018,63 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
       const result = await XzbNotify.drainNotifications();
       const latestStatus = result?.status || status;
       setNotificationStatus((current) => ({ ...current, ...latestStatus, queueCount: 0 }));
-      const entries = normalizeNotificationItems(result?.items || [], expenseCategories);
+      const entries = normalizeNotificationItems(
+        (result?.items || []).filter((item) => !item?.test),
+        expenseCategories,
+        merchantHistory
+      );
       if (!entries.length) {
         setNotificationNotice(getNotificationEmptyMessage(latestStatus));
         return;
       }
 
-      onPendingBatch(entries, { navigate: false });
-      setNotificationNotice(`已同步 ${entries.length} 条通知到账单待确认。`);
+      const summary = onNotificationEntries
+        ? onNotificationEntries(entries, { navigate: false })
+        : (onPendingBatch(entries, { navigate: false }), { confirmedCount: 0, pendingCount: entries.length });
+      setNotificationNotice(summary.confirmedCount
+        ? `已快捷确认 ${summary.confirmedCount} 条，另有 ${summary.pendingCount} 条待确认。`
+        : `已同步 ${summary.pendingCount} 条通知到账单待确认。`);
     } catch (error) {
       setNotificationNotice(error?.message || "同步通知失败，请确认权限已开启。");
+    }
+  }
+
+  async function testNotificationPipeline() {
+    if (!canUseNativeNotify) {
+      setNotificationNotice("通知链路自检需要在安卓安装包里运行。");
+      return;
+    }
+    if (!notificationStatus.enabled) {
+      setNotificationNotice("请先开启通知使用权，再运行链路自检。");
+      return;
+    }
+
+    setIsNotificationTesting(true);
+    try {
+      const result = await XzbNotify.runSelfTest();
+      const items = Array.isArray(result?.items) ? result.items : [];
+      const testItem = items.find((item) => item?.test);
+      const realEntries = normalizeNotificationItems(
+        items.filter((item) => !item?.test),
+        expenseCategories,
+        merchantHistory
+      );
+      if (realEntries.length) {
+        if (onNotificationEntries) onNotificationEntries(realEntries, { navigate: false });
+        else onPendingBatch(realEntries, { navigate: false });
+      }
+
+      const parsed = testItem ? parseWithHistory(String(testItem.rawText || "")) : null;
+      if (testItem && Number(parsed?.amount) === 0.01 && parsed?.merchant !== "未识别商户") {
+        setNotificationNotice("链路自检通过：原生插件、通知队列和账单解析均正常，测试数据未入账。");
+      } else {
+        setNotificationNotice("链路自检未通过，请重新安装当前版本后再试。");
+      }
+      if (result?.status) setNotificationStatus((current) => ({ ...current, ...result.status, queueCount: 0 }));
+    } catch (error) {
+      setNotificationNotice(error?.message || "通知链路自检失败，请重开小账本后再试。");
+    } finally {
+      setIsNotificationTesting(false);
     }
   }
 
@@ -919,7 +1087,7 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
       return;
     }
 
-    const parsed = parseExpenseText(normalizedText, expenseCategories);
+    const parsed = parseWithHistory(normalizedText);
     const nextCandidate = { ...parsed, source };
     setCandidate(nextCandidate);
     setImageNotice(
@@ -952,19 +1120,67 @@ function ScanScreen({ hidden = false, onPending, onPendingBatch }) {
       </header>
 
       <section className="notification-sync-card">
-        <div>
-          <span>通知自动记账</span>
-          <strong>{getNotificationStatusLabel(notificationStatus)}</strong>
-          <p>{getNotificationStatusDetail(notificationStatus)}</p>
+        <div className="notification-card-heading">
+          <div>
+            <span>通知自动记账</span>
+            <strong>{getNotificationStatusLabel(notificationStatus)}</strong>
+          </div>
+          <b className={`notification-state-badge ${notificationStatus.connected ? "ready" : notificationStatus.recovering ? "recovering" : ""}`}>
+            {notificationStatus.connected ? "运行中" : notificationStatus.recovering ? "恢复中" : "未启用"}
+          </b>
         </div>
+        <p>{getNotificationStatusDetail(notificationStatus)}</p>
+        <div className="notification-checks">
+          <NotificationCheck
+            active={notificationStatus.enabled}
+            title="系统授权"
+            detail={notificationStatus.enabled ? "已允许读取支付通知" : "未开启，无法自动记账"}
+          />
+          <NotificationCheck
+            active={notificationStatus.connected}
+            title="监听连接"
+            detail={notificationStatus.connected
+              ? "服务已在系统中运行"
+              : notificationStatus.recovering
+                ? `正在自动重连${notificationStatus.rebindRequestCount ? ` · 已尝试 ${notificationStatus.rebindRequestCount} 次` : ""}`
+                : "服务尚未接入系统"}
+          />
+          <NotificationCheck
+            active={Boolean(notificationStatus.lastSeenAt)}
+            title="平台通知"
+            detail={notificationStatus.lastSeenAt
+              ? `最近收到：${formatNotificationCaptureTime(notificationStatus.lastSeenAt)}`
+              : "尚未收到微信或支付宝通知"}
+          />
+          <NotificationCheck
+            active={Boolean(notificationStatus.quickConfirmEnabled)}
+            title="快捷确认"
+            detail={notificationStatus.quickConfirmEnabled
+              ? "缺少商户时可从系统通知选择候选"
+              : "未允许显示快捷确认通知"}
+          />
+        </div>
+        <button className="primary-button full" type="button" onClick={openNotificationSettings}>
+          {notificationStatus.enabled ? "重新授权通知使用权" : "立即开启通知使用权"}
+        </button>
         <div className="notification-actions">
-          <button className="secondary-button" type="button" onClick={openNotificationSettings}>
-            管理权限
-          </button>
-          <button className="primary-button" type="button" onClick={syncNotificationBills}>
+          <button className="secondary-button" type="button" onClick={syncNotificationBills}>
             检查并同步
           </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!notificationStatus.enabled || isNotificationTesting}
+            onClick={testNotificationPipeline}
+          >
+            {isNotificationTesting ? "自检中…" : "链路自检"}
+          </button>
         </div>
+        {notificationStatus.enabled && !notificationStatus.connected && (
+          <button className="notification-settings-link" type="button" onClick={openNotificationAppSettings}>
+            打开后台与电池设置
+          </button>
+        )}
         {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
       </section>
 
@@ -1055,7 +1271,20 @@ function BatchImageQueue({ images, activeId, onSelect }) {
 
 function getNotificationStatusLabel(status) {
   if (!status?.enabled) return "权限未开启";
-  return status.connected ? "监听正常" : "权限已开，等待连接";
+  if (status.connected) return "监听正常";
+  return status.recovering ? "监听正在自动恢复" : "权限已开，等待连接";
+}
+
+function NotificationCheck({ active, title, detail }) {
+  return (
+    <div className={`notification-check ${active ? "active" : ""}`}>
+      <i aria-hidden="true" />
+      <div>
+        <b>{title}</b>
+        <small>{detail}</small>
+      </div>
+    </div>
+  );
 }
 
 function getNotificationStatusDetail(status) {
@@ -1063,6 +1292,9 @@ function getNotificationStatusDetail(status) {
     return "需要在安卓系统的“通知使用权”中开启小账本。";
   }
   if (!status.connected) {
+    if (status.recovering) {
+      return "系统授权仍然有效，已启动分阶段自动重连；恢复后状态会自动更新。";
+    }
     return "系统已授权，但监听服务未连接；点击“检查并同步”会自动重连。";
   }
   if (status.lastAcceptedAt) {
@@ -1076,7 +1308,9 @@ function getNotificationStatusDetail(status) {
 
 function getNotificationEmptyMessage(status) {
   if (!status?.connected) {
-    return "通知权限已开启，但监听服务尚未连接。已尝试重连；请把小账本的电池设置改为“不限制”后再试。";
+    return status?.recovering
+      ? "监听正在自动恢复，账单队列仍可同步。若长时间未恢复，请把小账本的电池设置改为“不限制”。"
+      : "通知权限已开启，但监听服务尚未连接。已尝试重连；请把小账本的电池设置改为“不限制”后再试。";
   }
   if (status.lastReason === "not_payment") {
     return "已经收到微信/支付宝通知，但内容不是明确交易通知，因此没有生成账单。";
@@ -1096,10 +1330,16 @@ function getNotificationEmptyMessage(status) {
   if (status.lastReason === "empty_text") {
     return "已经收到平台通知，但系统隐藏了通知正文。请在微信/支付宝与锁屏通知设置中允许显示内容。";
   }
+  if (status.lastReason === "quick_confirmed") {
+    return "已从系统通知确认商户，打开小账本后会自动入账。";
+  }
   if (status.lastReason === "store_failed") {
     return "收到付款通知，但保存到待同步队列时失败，请重新打开小账本后再试。";
   }
-  return "监听服务正常，暂时没有新的付款通知。开启权限之前出现的旧通知不会自动补录。";
+  if (status.lastReason === "active_scan_denied") {
+    return "系统拒绝读取当前通知，请关闭通知使用权后重新开启。";
+  }
+  return "监听服务正常，暂时没有新的付款通知。授权后两分钟内仍显示在通知栏的最近一条支付通知会自动补抓。";
 }
 
 function formatNotificationCaptureTime(value) {
@@ -1109,6 +1349,8 @@ function formatNotificationCaptureTime(value) {
 }
 
 function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   function updateCandidate(id, patch) {
     setCandidates((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
@@ -1124,7 +1366,7 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
 
       <div className="batch-candidate-list">
         {candidates.map((item, index) => {
-          const categorySource = item.type === "income" ? incomeCategories : categories;
+          const categorySource = item.type === "income" ? incomeCategoryList : expenseCategories;
           return (
             <article className="batch-candidate-item" key={item.id}>
               <div className="batch-candidate-title">
@@ -1140,7 +1382,7 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
                       const type = event.target.value;
                       updateCandidate(item.id, {
                         type,
-                        category: type === "income" ? "salary" : "food"
+                        category: type === "income" ? incomeCategoryList[0]?.id || "income-other" : expenseCategories[0]?.id || "other"
                       });
                     }}
                   >
@@ -1160,7 +1402,12 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
                 </label>
                 <label>
                   <span>商户</span>
-                  <input value={item.merchant} onChange={(event) => updateCandidate(item.id, { merchant: event.target.value })} />
+                  <input
+                    value={item.merchant}
+                    onChange={(event) => updateCandidate(item.id, { merchant: event.target.value, merchantMemory: null })}
+                  />
+                  <MerchantMemoryHint candidate={item} />
+          <MerchantSuggestions candidate={item} onSelect={(suggestion) => updateCandidate(item.id, { merchant: suggestion.name, category: suggestion.category || item.category, merchantMemory: { matched: true, matchType: "user_selected_suggestion", samples: suggestion.samples } })} />
                 </label>
                 <label>
                   <span>分类</span>
@@ -1239,7 +1486,12 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
         />
       </Field>
       <Field label="商户">
-        <input value={candidate.merchant} onChange={(event) => setCandidate({ ...candidate, merchant: event.target.value })} />
+        <input
+          value={candidate.merchant}
+          onChange={(event) => setCandidate({ ...candidate, merchant: event.target.value, merchantMemory: null })}
+        />
+        <MerchantMemoryHint candidate={candidate} />
+        <MerchantSuggestions candidate={candidate} onSelect={(suggestion) => setCandidate({ ...candidate, merchant: suggestion.name, category: suggestion.category || candidate.category, merchantMemory: { matched: true, matchType: "user_selected_suggestion", samples: suggestion.samples } })} />
       </Field>
       <Field label="分类">
         <CategoryGrid type={candidate.type} value={candidate.category} onChange={(category) => setCandidate({ ...candidate, category })} />
@@ -1273,6 +1525,43 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
   );
 }
 
+function MerchantMemoryHint({ candidate }) {
+  const memory = candidate?.merchantMemory;
+  if (!memory?.matched) return null;
+  const changed = memory.originalMerchant
+    && memory.originalMerchant !== candidate.merchant
+    && memory.originalMerchant !== "未识别商户";
+  return (
+    <small className="merchant-memory-hint">
+      {changed
+        ? `已按历史账单校准：${memory.originalMerchant} → ${candidate.merchant}`
+        : `已参考 ${memory.samples} 笔历史账单确认商户与分类`}
+    </small>
+  );
+}
+
+function MerchantSuggestions({ candidate, onSelect }) {
+  const suggestions = Array.isArray(candidate?.merchantSuggestions) ? candidate.merchantSuggestions : [];
+  if (!suggestions.length) return null;
+  return (
+    <div className="merchant-suggestions">
+      <small>{candidate?.merchantPrediction ? "历史习惯推测，请确认" : "通知未提供商户，历史候选"}</small>
+      <div>
+        {suggestions.map((suggestion) => (
+          <button
+            key={`${suggestion.name}-${suggestion.category || "other"}`}
+            type="button"
+            className={candidate.merchant === suggestion.name ? "selected" : ""}
+            onClick={() => onSelect(suggestion)}
+          >
+            <span>{suggestion.name}</span>
+            <b>{suggestion.confidence || 0}%</b>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 function ScreenshotCropPanel({ crop, image, onCropChange }) {
   const stageRef = useRef(null);
   const dragRef = useRef(null);
@@ -1365,7 +1654,10 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
 
 function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, currentMonth, onMonthChange, onEdit, onDelete }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   const [selectedDay, setSelectedDay] = useState(() => getDefaultReportDay(stats.days, selectedMonth, currentMonth));
+  const [analysisTab, setAnalysisTab] = useState("merchant");
+  const [incomeAnalysisTab, setIncomeAnalysisTab] = useState("source");
   const dailyStripRef = useRef(null);
   const previousMonth = shiftMonth(selectedMonth, -1);
   const previousExpenses = useMemo(
@@ -1373,10 +1665,12 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
     [allExpenses, previousMonth]
   );
   const previousStats = useMemo(
-    () => getMonthStats(previousExpenses, budget, previousMonth, expenseCategories),
-    [previousExpenses, budget, previousMonth, expenseCategories]
+    () => getMonthStats(previousExpenses, budget, previousMonth, expenseCategories, incomeCategoryList),
+    [previousExpenses, budget, previousMonth, expenseCategories, incomeCategoryList]
   );
   const comparison = getMonthComparison(stats.total, previousStats.total);
+  const incomeComparison = compareIncome(stats.incomeTotal, previousStats.incomeTotal);
+  const incomeComparisonLabels = getIncomeComparisonLabels(incomeComparison);
   const merchantRanking = useMemo(() => getMerchantRanking(expenses, stats.total), [expenses, stats.total]);
   const paymentMethodTotals = useMemo(() => getPaymentMethodTotals(expenses, stats.total), [expenses, stats.total]);
   const budgetStatus = getBudgetStatus(stats, budget, selectedMonth, currentMonth);
@@ -1401,30 +1695,59 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
   }, [selectedDay]);
 
   return (
-    <Screen>
+    <Screen className="report-screen">
       <header className="screen-heading report-heading">
-        <p>月度报告</p>
-        <h2>{formatMonthLabel(selectedMonth)}</h2>
+        <div>
+          <p>月度报告</p>
+          <h2>收支概览</h2>
+        </div>
+        <CompactMonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
       </header>
 
-      <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
-
-      <section className="report-summary">
-        <div>
+      <section className="report-overview">
+        <div className="report-primary-metric">
           <span>本月支出</span>
           <strong>{money(stats.total)}</strong>
+          <em className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>
+            较上月 {comparison.amountLabel}
+          </em>
         </div>
-        <div>
-          <span>本月收入</span>
-          <strong>{money(stats.incomeTotal)}</strong>
+        <div className="report-secondary-metrics">
+          <div>
+            <span>收入</span>
+            <strong>{money(stats.incomeTotal)}</strong>
+          </div>
+          <div>
+            <span>结余</span>
+            <strong className={stats.balance < 0 ? "negative" : "positive"}>{money(stats.balance)}</strong>
+          </div>
         </div>
-        <div>
-          <span>本月结余</span>
-          <strong>{money(stats.balance)}</strong>
+        <div className={`report-budget ${budgetStatus.tone}`}>
+          <div>
+            <span>{budgetStatus.title}</span>
+            <b>{Math.round(stats.usedRate)}%</b>
+          </div>
+          <div className="report-budget-track"><i style={{ width: `${Math.min(stats.usedRate, 100)}%` }} /></div>
+          <p>{budgetStatus.detail}</p>
+          <small>预算 {money(budget)} · {budgetStatus.meta}</small>
         </div>
       </section>
 
-      <section className="chart-panel daily-spend-panel">
+      <section className="report-section report-trend-section">
+        <SectionTitle title="消费趋势" aside="本月 / 上月" />
+        <div className="trend-legend">
+          <span><i className="current" />本月</span>
+          <span><i className="previous" />上月</span>
+        </div>
+        <TrendChart
+          days={stats.days}
+          previousDays={previousStats.days}
+          selectedDay={selectedDay}
+          onDaySelect={setSelectedDay}
+        />
+      </section>
+
+      <section className="report-section daily-spend-panel">
         <SectionTitle title="每日消费" aside={formatDailyLabel(selectedDay)} />
         <div className="daily-spend-strip" ref={dailyStripRef}>
           {stats.days.map((day) => (
@@ -1435,7 +1758,8 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
               onClick={() => setSelectedDay(day.date)}
               aria-pressed={day.date === selectedDay}
             >
-              <span>{Number(day.date.slice(-2))} 日</span>
+              <span>{Number(day.date.slice(-2))}</span>
+              <small>{formatWeekdayShort(day.date)}</small>
               <strong>{money(day.total)}</strong>
             </button>
           ))}
@@ -1450,54 +1774,28 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
         <DailyExpenseList items={selectedDayExpenses} />
       </section>
 
-      <section className="chart-panel">
-        <SectionTitle title="环比上月" aside={formatMonthLabel(previousMonth)} />
-        <div className="comparison-grid">
-          <div>
-            <span>上月支出</span>
-            <strong>{money(previousStats.total)}</strong>
-          </div>
-          <div>
-            <span>金额变化</span>
-            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>{comparison.amountLabel}</strong>
-          </div>
-          <div>
-            <span>环比变化</span>
-            <strong className={comparison.delta > 0 ? "negative" : comparison.delta < 0 ? "positive" : ""}>
-              {comparison.rateLabel}
-            </strong>
-          </div>
+      <section className="report-section report-analysis">
+        <SectionTitle title="消费分析" aside={`${expenses.filter((item) => item.type !== "income").length} 笔支出`} />
+        <div className="report-tabs" role="tablist" aria-label="消费分析类型">
+          {[
+            ["merchant", "商户"],
+            ["method", "付款方式"],
+            ["category", "分类"]
+          ].map(([id, label]) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={analysisTab === id}
+              className={analysisTab === id ? "active" : ""}
+              key={id}
+              onClick={() => setAnalysisTab(id)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      </section>
 
-      <section className={`budget-alert ${budgetStatus.tone}`}>
-        <div>
-          <span>预算状态</span>
-          <strong>{budgetStatus.title}</strong>
-          <p>{budgetStatus.detail}</p>
-        </div>
-        <b>{Math.round(stats.usedRate)}%</b>
-        <div className="budget-alert-track">
-          <i style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
-        </div>
-        <div className="budget-alert-meta">
-          <span>预算 {money(budget)}</span>
-          <span>{budgetStatus.meta}</span>
-        </div>
-      </section>
-
-      <section className="chart-panel">
-        <SectionTitle title="消费趋势" aside="本月 / 上月" />
-        <div className="trend-legend">
-          <span><i className="current" />本月</span>
-          <span><i className="previous" />上月</span>
-        </div>
-        <TrendChart days={stats.days} previousDays={previousStats.days} />
-      </section>
-
-      <section className="chart-panel">
-        <SectionTitle title="商户排行" aside={`前 ${Math.min(merchantRanking.length, 5)} 名`} />
-        {merchantRanking.length === 0 ? (
+        {analysisTab === "merchant" && (merchantRanking.length === 0 ? (
           <EmptyLine text="本月还没有商户消费记录" />
         ) : (
           <div className="merchant-ranking">
@@ -1513,12 +1811,9 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
               </div>
             ))}
           </div>
-        )}
-      </section>
+        ))}
 
-      <section className="chart-panel">
-        <SectionTitle title="付款方式" aside={`${paymentMethodTotals.length} 种`} />
-        {paymentMethodTotals.length === 0 ? (
+        {analysisTab === "method" && (paymentMethodTotals.length === 0 ? (
           <EmptyLine text="本月还没有付款记录" />
         ) : (
           <div className="payment-method-list">
@@ -1533,36 +1828,117 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
               </div>
             ))}
           </div>
-        )}
+        ))}
+
+        {analysisTab === "category" && (stats.categoryTotals.length === 0 ? (
+          <EmptyLine text="本月还没有分类消费记录" />
+        ) : (
+          <div className="category-report">
+            <div className="donut" style={{ background: buildConic(stats.categoryTotals) }}>
+              <span><b>{stats.categoryTotals.length}</b><small>个分类</small></span>
+            </div>
+            <div className="bar-list">
+              {stats.categoryTotals.map((item) => (
+                <div className="bar-row" key={item.id}>
+                  <span>{item.name}</span>
+                  <div><i style={{ width: `${item.percent}%`, background: item.color }} /></div>
+                  <b>{money(item.total)}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </section>
 
-      <section className="chart-panel">
-        <SectionTitle title="分类占比" aside={stats.topCategory?.name || "暂无"} />
-        <div className="category-report">
-          <div className="donut" style={{ background: buildConic(stats.categoryTotals) }}>
-            <span>{Math.round(stats.usedRate)}%</span>
+      <section className="report-section report-analysis income-analysis">
+        <SectionTitle title="收入总结" aside={`${stats.incomeCount} 笔收入`} />
+        <div className="income-summary-grid">
+          <div className="income-summary-primary">
+            <span>本月收入</span>
+            <strong>{money(stats.incomeTotal)}</strong>
+            <em className={incomeComparisonLabels.tone}>{incomeComparisonLabels.rateLabel}</em>
           </div>
-          <div className="bar-list">
-            {stats.categoryTotals.map((item) => (
-              <div className="bar-row" key={item.id}>
-                <span>{item.name}</span>
-                <div><i style={{ width: `${item.percent}%`, background: item.color }} /></div>
-                <b>{money(item.total)}</b>
+          <div>
+            <span>平均每笔</span>
+            <strong>{money(stats.incomeAverage)}</strong>
+          </div>
+          <div>
+            <span>最大单笔</span>
+            <strong>{stats.maxIncome ? money(stats.maxIncome.amount) : "¥0"}</strong>
+            <small>{stats.maxIncome?.merchant || "暂无收入"}</small>
+          </div>
+          <div>
+            <span>收入变化</span>
+            <strong className={incomeComparisonLabels.tone}>{incomeComparisonLabels.amountLabel}</strong>
+          </div>
+        </div>
+
+        <div className="report-tabs two-tabs" role="tablist" aria-label="收入总结类型">
+          {[["source", "收入来源"], ["category", "收入分类"]].map(([id, label]) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={incomeAnalysisTab === id}
+              className={incomeAnalysisTab === id ? "active" : ""}
+              key={id}
+              onClick={() => setIncomeAnalysisTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {incomeAnalysisTab === "source" && (stats.incomeSourceRanking.length === 0 ? (
+          <EmptyLine text="本月还没有收入记录" />
+        ) : (
+          <div className="merchant-ranking income-ranking">
+            {stats.incomeSourceRanking.slice(0, 5).map((source, index) => (
+              <div className="merchant-rank-item" key={source.name}>
+                <b className="merchant-rank-number">{index + 1}</b>
+                <div>
+                  <strong>{source.name}</strong>
+                  <span>{source.count} 笔 · 平均 {money(source.average)}</span>
+                  <div><i style={{ width: `${source.percent}%` }} /></div>
+                </div>
+                <b>{money(source.total)}</b>
               </div>
             ))}
           </div>
+        ))}
+
+        {incomeAnalysisTab === "category" && (stats.incomeCategoryTotals.length === 0 ? (
+          <EmptyLine text="本月还没有分类收入记录" />
+        ) : (
+          <div className="category-report income-category-report">
+            <div className="donut" style={{ background: buildConic(stats.incomeCategoryTotals) }}>
+              <span><b>{stats.incomeCategoryTotals.length}</b><small>个分类</small></span>
+            </div>
+            <div className="bar-list">
+              {stats.incomeCategoryTotals.map((item) => (
+                <div className="bar-row" key={item.id}>
+                  <span>{item.name}</span>
+                  <div><i style={{ width: `${item.percent}%`, background: item.color }} /></div>
+                  <b>{money(item.total)}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="report-section">
+        <SectionTitle title="收支洞察" aside={comparison.rateLabel} />
+        <div className="report-insights">
+        <Insight text={stats.topCategory ? `${stats.topCategory.name} 是本月最高支出分类` : "本月还没有支出记录"} />
+        <Insight text={stats.maxExpense ? `最大单笔是 ${stats.maxExpense.merchant}` : "开始记第一笔后生成洞察"} />
+        <Insight text={stats.incomeTotal
+          ? `${stats.topIncomeCategory?.name || "收入"}贡献最高，本月收入 ${money(stats.incomeTotal)}，结余 ${money(stats.balance)}`
+          : "收入记录会显示在结余里"} />
         </div>
       </section>
 
-      <SectionTitle title="收支洞察" aside={`${expenses.length} 笔`} />
-      <div className="insight-list">
-        <Insight text={stats.topCategory ? `${stats.topCategory.name} 是本月最高支出分类` : "本月还没有支出记录"} />
-        <Insight text={stats.maxExpense ? `最大单笔是 ${stats.maxExpense.merchant}` : "开始记第一笔后生成洞察"} />
-        <Insight text={stats.incomeTotal ? `本月收入 ${money(stats.incomeTotal)}，结余 ${money(stats.balance)}` : "收入记录会显示在结余里"} />
-      </div>
-
       <SectionTitle title="月度账单" aside={`${expenses.length} 笔`} />
-      <ExpenseList items={expenses} onEdit={onEdit} onDelete={onDelete} />
+      <GroupedExpenseList items={expenses} onEdit={onEdit} onDelete={onDelete} />
     </Screen>
   );
 }
@@ -1571,10 +1947,13 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   const [coverDraft, setCoverDraft] = useState(null);
   const [coverCrop, setCoverCrop] = useState({ x: 50, y: 50, zoom: 1 });
   const [categoryEditor, setCategoryEditor] = useState(null);
+  const [iconSearch, setIconSearch] = useState("");
+  const [iconGroup, setIconGroup] = useState("all");
   const [draggingCategoryId, setDraggingCategoryId] = useState("");
-  const categoryDragRef = useRef("");
-  const customCategories = settings.customExpenseCategories || [];
+  const categoryDragRef = useRef({ id: "", type: "expense" });
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
+  const visibleCategoryIcons = useMemo(() => searchCategoryIcons(iconSearch, iconGroup), [iconSearch, iconGroup]);
 
   useEffect(() => {
     if (!categoryEditor) return undefined;
@@ -1604,7 +1983,9 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
     setCoverDraft(null);
   }
 
-  function openCategoryEditor(category) {
+  function openCategoryEditor(category, type = "expense") {
+    setIconSearch("");
+    setIconGroup("all");
     setCategoryEditor({
       id: category?.id || "",
       name: category?.name || "",
@@ -1612,7 +1993,8 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
       color: category?.color || "#6f927d",
       keywordsText: (category?.keywords || []).join("、"),
       custom: Boolean(category?.custom),
-      isNew: !category
+      isNew: !category,
+      type
     });
   }
 
@@ -1621,7 +2003,9 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
     const name = categoryEditor.name.trim().slice(0, 12);
     if (!name) return;
     const keywords = parseCategoryKeywords(categoryEditor.keywordsText);
-    const duplicate = expenseCategories.some((category) => category.name === name && category.id !== categoryEditor.id);
+    const isIncome = categoryEditor.type === "income";
+    const categorySource = isIncome ? incomeCategoryList : expenseCategories;
+    const duplicate = categorySource.some((category) => category.name === name && category.id !== categoryEditor.id);
     if (duplicate) return;
 
     if (categoryEditor.isNew) {
@@ -1635,88 +2019,132 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
       };
       setSettings((current) => ({
         ...current,
-        customExpenseCategories: [...(current.customExpenseCategories || []), nextCategory],
-        categoryOrder: [...expenseCategories.map((category) => category.id), nextCategory.id]
+        ...(isIncome
+          ? {
+              customIncomeCategories: [...(current.customIncomeCategories || []), nextCategory],
+              incomeCategoryOrder: [...incomeCategoryList.map((category) => category.id), nextCategory.id]
+            }
+          : {
+              customExpenseCategories: [...(current.customExpenseCategories || []), nextCategory],
+              categoryOrder: [...expenseCategories.map((category) => category.id), nextCategory.id]
+            })
       }));
     } else if (categoryEditor.custom) {
       setSettings((current) => ({
         ...current,
-        customExpenseCategories: (current.customExpenseCategories || []).map((category) =>
-          category.id === categoryEditor.id
-            ? { ...category, name, icon: categoryEditor.icon, color: categoryEditor.color, keywords, custom: true }
-            : category
-        )
+        ...(isIncome
+          ? {
+              customIncomeCategories: (current.customIncomeCategories || []).map((category) =>
+                category.id === categoryEditor.id
+                  ? { ...category, name, icon: categoryEditor.icon, color: categoryEditor.color, keywords, custom: true }
+                  : category
+              )
+            }
+          : {
+              customExpenseCategories: (current.customExpenseCategories || []).map((category) =>
+                category.id === categoryEditor.id
+                  ? { ...category, name, icon: categoryEditor.icon, color: categoryEditor.color, keywords, custom: true }
+                  : category
+              )
+            })
       }));
     } else {
       setSettings((current) => ({
         ...current,
-        categoryOverrides: {
-          ...(current.categoryOverrides || {}),
-          [categoryEditor.id]: {
-            name,
-            icon: categoryEditor.icon,
-            color: categoryEditor.color,
-            keywords
-          }
-        }
+        ...(isIncome
+          ? {
+              incomeCategoryOverrides: {
+                ...(current.incomeCategoryOverrides || {}),
+                [categoryEditor.id]: {
+                  name,
+                  icon: categoryEditor.icon,
+                  color: categoryEditor.color,
+                  keywords
+                }
+              }
+            }
+          : {
+              categoryOverrides: {
+                ...(current.categoryOverrides || {}),
+                [categoryEditor.id]: {
+                  name,
+                  icon: categoryEditor.icon,
+                  color: categoryEditor.color,
+                  keywords
+                }
+              }
+            })
       }));
     }
     setCategoryEditor(null);
   }
 
-  function removeCustomCategory(category) {
+  function removeCustomCategory(category, type = "expense") {
     if (!window.confirm(`删除“${category.name}”分类吗？已有账单会归入“其他”。`)) return;
+    const isIncome = type === "income";
     setSettings((current) => ({
       ...current,
-      customExpenseCategories: (current.customExpenseCategories || []).filter((item) => item.id !== category.id),
-      categoryOrder: (current.categoryOrder || []).filter((id) => id !== category.id)
+      ...(isIncome
+        ? {
+            customIncomeCategories: (current.customIncomeCategories || []).filter((item) => item.id !== category.id),
+            incomeCategoryOrder: (current.incomeCategoryOrder || []).filter((id) => id !== category.id)
+          }
+        : {
+            customExpenseCategories: (current.customExpenseCategories || []).filter((item) => item.id !== category.id),
+            categoryOrder: (current.categoryOrder || []).filter((id) => id !== category.id)
+          })
     }));
-    setExpenses((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
-    setPending((items) => items.map((item) => item.category === category.id ? { ...item, category: "other" } : item));
+    const fallback = isIncome ? "income-other" : "other";
+    setExpenses((items) => items.map((item) => item.category === category.id ? { ...item, category: fallback } : item));
+    setPending((items) => items.map((item) => item.category === category.id ? { ...item, category: fallback } : item));
     if (categoryEditor?.id === category.id) setCategoryEditor(null);
   }
 
-  function moveCategory(sourceId, targetId) {
+  function moveCategory(sourceId, targetId, type = "expense") {
     if (!sourceId || !targetId || sourceId === targetId) return;
-    const order = expenseCategories.map((category) => category.id);
+    const sourceCategories = type === "income" ? incomeCategoryList : expenseCategories;
+    const order = sourceCategories.map((category) => category.id);
     const sourceIndex = order.indexOf(sourceId);
     const targetIndex = order.indexOf(targetId);
     if (sourceIndex < 0 || targetIndex < 0) return;
     order.splice(sourceIndex, 1);
     order.splice(targetIndex, 0, sourceId);
-    setSettings((current) => ({ ...current, categoryOrder: order }));
+    setSettings((current) => ({
+      ...current,
+      [type === "income" ? "incomeCategoryOrder" : "categoryOrder"]: order
+    }));
   }
 
-  function startCategoryPointerDrag(event, categoryId) {
+  function startCategoryPointerDrag(event, categoryId, type = "expense") {
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    categoryDragRef.current = categoryId;
+    categoryDragRef.current = { id: categoryId, type };
     setDraggingCategoryId(categoryId);
   }
 
   function moveCategoryPointerDrag(event) {
-    const sourceId = categoryDragRef.current;
+    const sourceId = categoryDragRef.current.id;
     if (!sourceId) return;
     const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-category-id]");
     const targetId = target?.dataset?.categoryId;
-    if (targetId && targetId !== sourceId) moveCategory(sourceId, targetId);
+    if (targetId && targetId !== sourceId) moveCategory(sourceId, targetId, categoryDragRef.current.type);
   }
 
   function endCategoryPointerDrag() {
-    categoryDragRef.current = "";
+    categoryDragRef.current = { id: "", type: "expense" };
     setDraggingCategoryId("");
   }
 
-  function startCategoryHtmlDrag(event, categoryId) {
-    categoryDragRef.current = categoryId;
+  function startCategoryHtmlDrag(event, categoryId, type = "expense") {
+    categoryDragRef.current = { id: categoryId, type };
     setDraggingCategoryId(categoryId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", categoryId);
   }
 
-  function dragCategoryOver(event, targetId) {
+  function dragCategoryOver(event, targetId, type = "expense") {
     event.preventDefault();
-    moveCategory(categoryDragRef.current, targetId);
+    moveCategory(categoryDragRef.current.id, targetId, type);
   }
 
   return (
@@ -1810,7 +2238,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
                   <EditIcon />
                 </button>
                 {category.custom && (
-                  <button className="row-icon" type="button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category)}>
+                  <button className="row-icon" type="button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category, "expense")}>
                     <TrashIcon />
                   </button>
                 )}
@@ -1827,7 +2255,9 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
               className="category-editor-backdrop"
               role="dialog"
               aria-modal="true"
-              aria-label={categoryEditor.isNew ? "添加消费分类" : `编辑${categoryEditor.name}`}
+              aria-label={categoryEditor.isNew
+                ? `添加${categoryEditor.type === "income" ? "收入" : "消费"}分类`
+                : `编辑${categoryEditor.name}`}
               onPointerDown={(event) => {
                 if (event.target === event.currentTarget) setCategoryEditor(null);
               }}
@@ -1835,7 +2265,9 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
             <section className="category-editor">
               <div className="category-editor-heading">
                 <div>
-                  <span>{categoryEditor.isNew ? "新分类" : categoryEditor.custom ? "编辑自定义分类" : "编辑内置分类"}</span>
+                  <span>{categoryEditor.isNew
+                    ? `新${categoryEditor.type === "income" ? "收入" : "消费"}分类`
+                    : categoryEditor.custom ? "编辑自定义分类" : "编辑内置分类"}</span>
                   <h3>{categoryEditor.isNew ? "设计分类" : categoryEditor.name}</h3>
                 </div>
                 <button className="ghost-button" type="button" aria-label="关闭分类编辑" onClick={() => setCategoryEditor(null)}>×</button>
@@ -1850,40 +2282,69 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
                 />
               </Field>
 
-              <div className="category-designer">
-                  <div>
-                    <span>图标</span>
-                    <div className="icon-picker">
-                      {categoryIconOptions.map((icon) => (
-                        <button
-                          key={icon.id}
-                          type="button"
-                          className={categoryEditor.icon === icon.id ? "selected" : ""}
-                          title={icon.name}
-                          aria-label={icon.name}
-                          onClick={() => setCategoryEditor({ ...categoryEditor, icon: icon.id })}
-                        >
-                          <CategoryIcon name={icon.id} size={19} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <span>颜色</span>
-                    <div className="color-picker">
-                      {categoryColors.map((color) => (
-                        <button
-                          key={color}
-                          type="button"
-                          className={categoryEditor.color === color ? "selected" : ""}
-                          aria-label="选择分类颜色"
-                          style={{ background: color }}
-                          onClick={() => setCategoryEditor({ ...categoryEditor, color })}
-                        />
-                      ))}
-                    </div>
-                  </div>
+              <div className="category-icon-library">
+                <div className="category-icon-library-heading">
+                  <span>分类图标</span>
+                  <b style={{ color: categoryEditor.color }}>
+                    <CategoryIcon name={categoryEditor.icon} size={20} />
+                  </b>
                 </div>
+                <label className="icon-search-box">
+                  <Search size={17} aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={iconSearch}
+                    placeholder="搜索图标，例如：咖啡、宠物、地铁"
+                    onChange={(event) => setIconSearch(event.target.value)}
+                  />
+                </label>
+                <div className="icon-group-tabs" role="tablist" aria-label="图标分组">
+                  {categoryIconGroups.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={iconGroup === group.id}
+                      className={iconGroup === group.id ? "selected" : ""}
+                      onClick={() => setIconGroup(group.id)}
+                    >
+                      {group.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="icon-picker-grid">
+                  {visibleCategoryIcons.map((icon) => (
+                    <button
+                      key={icon.id}
+                      type="button"
+                      className={categoryEditor.icon === icon.id ? "selected" : ""}
+                      title={icon.name}
+                      aria-label={`选择${icon.name}图标`}
+                      onClick={() => setCategoryEditor({ ...categoryEditor, icon: icon.id })}
+                    >
+                      <CategoryIcon name={icon.id} size={20} />
+                      <span>{icon.name}</span>
+                    </button>
+                  ))}
+                  {!visibleCategoryIcons.length && <p className="icon-empty">没有匹配的图标</p>}
+                </div>
+              </div>
+
+              <div className="category-color-section">
+                <span>分类颜色</span>
+                <div className="color-picker">
+                  {categoryColors.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className={categoryEditor.color === color ? "selected" : ""}
+                      aria-label="选择分类颜色"
+                      style={{ background: color }}
+                      onClick={() => setCategoryEditor({ ...categoryEditor, color })}
+                    />
+                  ))}
+                </div>
+              </div>
 
               <Field label="自动归类关键词">
                 <textarea
@@ -1902,6 +2363,56 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
             </section>
             </div>
           )}
+        </section>
+
+        <SectionTitle title="收入分类" aside="拖动排序" />
+        <section className="settings-panel category-manager">
+          <div
+            className="category-sort-list"
+            onPointerMove={moveCategoryPointerDrag}
+            onPointerUp={endCategoryPointerDrag}
+            onPointerCancel={endCategoryPointerDrag}
+          >
+            {incomeCategoryList.map((category) => (
+              <div
+                className={draggingCategoryId === category.id ? "category-sort-row dragging" : "category-sort-row"}
+                data-category-id={category.id}
+                draggable
+                key={category.id}
+                onDragStart={(event) => startCategoryHtmlDrag(event, category.id, "income")}
+                onDragOver={(event) => dragCategoryOver(event, category.id, "income")}
+                onDragEnd={endCategoryPointerDrag}
+              >
+                <button
+                  className="category-grip"
+                  type="button"
+                  aria-label={`拖动${category.name}`}
+                  onPointerDown={(event) => startCategoryPointerDrag(event, category.id, "income")}
+                >
+                  <GripIcon />
+                </button>
+                <span className="category-list-icon" style={{ color: category.color }}>
+                  <CategoryIcon name={category.icon} size={19} />
+                </span>
+                <div>
+                  <b>{category.name}</b>
+                  <span>{category.keywords.length ? category.keywords.join("、") : "未设置关键词"}</span>
+                </div>
+                <button className="row-icon" type="button" aria-label={`编辑${category.name}`} onClick={() => openCategoryEditor(category, "income")}>
+                  <EditIcon />
+                </button>
+                {category.custom && (
+                  <button className="row-icon" type="button" aria-label={`删除${category.name}`} onClick={() => removeCustomCategory(category, "income")}>
+                    <TrashIcon />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button className="secondary-button full" type="button" onClick={() => openCategoryEditor(null, "income")}>
+            <PlusIcon /> 添加收入分类
+          </button>
         </section>
 
         <section className="settings-panel">
@@ -1935,6 +2446,10 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
       )}
     </>
   );
+}
+
+function Screen({ children, className = "", hidden = false }) {
+  return <div className={`screen ${className}`.trim()} hidden={hidden}>{children}</div>;
 }
 
 function CoverCropModal({ crop, draft, onApply, onCancel, onCropChange }) {
@@ -2009,6 +2524,27 @@ function PendingCard({ item, onConfirm, onDelete }) {
         </div>
         <b className={local.type === "income" ? "income-amount" : ""}>{signedMoney(local.amount, local.type)}</b>
       </div>
+      <div className="pending-quick-edit">
+        <label>
+          <span>金额</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={local.amount}
+            onChange={(event) => setLocal({ ...local, amount: event.target.value })}
+          />
+        </label>
+        <label>
+          <span>商户</span>
+          <input
+            value={local.merchant}
+            onChange={(event) => setLocal({ ...local, merchant: event.target.value, merchantMemory: null })}
+          />
+          <MerchantMemoryHint candidate={local} />
+          <MerchantSuggestions candidate={local} onSelect={(suggestion) => setLocal({ ...local, merchant: suggestion.name, category: suggestion.category || local.category, merchantMemory: { matched: true, matchType: "user_selected_suggestion", samples: suggestion.samples } })} />
+        </label>
+      </div>
       <CategoryGrid compact type={local.type} value={local.category} onChange={(category) => setLocal({ ...local, category })} />
       <div className="pending-actions">
         <button type="button" className="ghost-button" onClick={() => onDelete(item)}>
@@ -2025,12 +2561,13 @@ function PendingCard({ item, onConfirm, onDelete }) {
 
 function ExpenseList({ items, onEdit, onDelete }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   if (!items.length) return <EmptyLine text="还没有记录" />;
 
   return (
     <div className="expense-list">
       {items.map((item) => {
-        const category = getCategory(item.category, item.type, expenseCategories);
+        const category = getCategory(item.category, item.type, expenseCategories, incomeCategoryList);
         return (
           <article className={item.type === "income" ? "expense-row income-row" : "expense-row"} key={item.id}>
             <span className="expense-category-icon" style={{ color: category.color }}>
@@ -2057,12 +2594,13 @@ function ExpenseList({ items, onEdit, onDelete }) {
 
 function DailyExpenseList({ items }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   if (!items.length) return <EmptyLine text="当天没有消费记录" />;
 
   return (
     <div className="daily-expense-list">
       {items.map((item) => {
-        const category = getCategory(item.category, item.type, expenseCategories);
+        const category = getCategory(item.category, item.type, expenseCategories, incomeCategoryList);
         return (
           <div className="daily-expense-row" key={item.id}>
             <span className="expense-category-icon" style={{ color: category.color }}>
@@ -2083,6 +2621,7 @@ function DailyExpenseList({ items }) {
 
 function GroupedExpenseList({ items, onEdit, onDelete }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   const groups = useMemo(() => {
     const grouped = new Map();
     items.forEach((item) => {
@@ -2110,7 +2649,7 @@ function GroupedExpenseList({ items, onEdit, onDelete }) {
             </header>
             <div>
               {dayItems.map((item) => {
-                const category = getCategory(item.category, item.type, expenseCategories);
+                const category = getCategory(item.category, item.type, expenseCategories, incomeCategoryList);
                 return (
                   <article className={item.type === "income" ? "grouped-expense-row income-row" : "grouped-expense-row"} key={item.id}>
                     <span className="expense-category-icon" style={{ color: category.color }}>
@@ -2176,10 +2715,6 @@ function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
       </section>
     </div>
   );
-}
-
-function Screen({ children, className = "", hidden = false }) {
-  return <div className={`screen ${className}`.trim()} hidden={hidden}>{children}</div>;
 }
 
 function SectionTitle({ title, aside }) {
@@ -2275,7 +2810,8 @@ function TypeToggle({ value, onChange }) {
 
 function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
-  const categorySource = type === "income" ? incomeCategories : expenseCategories;
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
+  const categorySource = type === "income" ? incomeCategoryList : expenseCategories;
   return (
     <div className={compact ? "category-grid compact" : "category-grid"}>
       {categorySource.map((category) => (
@@ -2355,12 +2891,18 @@ function EmptyLine({ text }) {
   return <p className="empty-line">{text}</p>;
 }
 
-function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCategories = categories) {
+function getMonthStats(
+  expenses,
+  budget,
+  month = today().slice(0, 7),
+  expenseCategories = categories,
+  incomeCategoryList = incomeCategories
+) {
   // Older records did not have a type; they are historical expense records.
   const expenseItems = expenses.filter((item) => !item.type || item.type === "expense");
-  const incomeItems = expenses.filter((item) => item.type === "income");
+  const incomeSummary = buildIncomeSummary(expenses, incomeCategoryList);
   const total = expenseItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const incomeTotal = incomeItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const incomeTotal = incomeSummary.total;
   const currentMonth = today().slice(0, 7);
   const todayTotal = month === currentMonth
     ? expenseItems.filter((item) => item.date === today()).reduce((sum, item) => sum + Number(item.amount || 0), 0)
@@ -2394,6 +2936,11 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCat
   return {
     total,
     incomeTotal,
+    incomeCount: incomeSummary.count,
+    incomeAverage: incomeSummary.average,
+    incomeCategoryTotals: incomeSummary.categoryTotals,
+    topIncomeCategory: incomeSummary.topCategory,
+    incomeSourceRanking: incomeSummary.sourceRanking,
     balance: incomeTotal - total,
     budget,
     todayTotal,
@@ -2402,7 +2949,7 @@ function getMonthStats(expenses, budget, month = today().slice(0, 7), expenseCat
     categoryTotals,
     topCategory,
     maxExpense: expenseItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
-    maxIncome: incomeItems.slice().sort((a, b) => Number(b.amount) - Number(a.amount))[0],
+    maxIncome: incomeSummary.max,
     days
   };
 }
@@ -2424,6 +2971,29 @@ function getMonthComparison(currentTotal, previousTotal) {
       ? `少支出 ${money(Math.abs(delta))}`
       : "与上月持平";
   return { delta, amountLabel, rateLabel };
+}
+
+function getIncomeComparisonLabels(comparison) {
+  if (comparison.previous <= 0) {
+    return comparison.current > 0
+      ? { amountLabel: "上月无收入", rateLabel: "本月新增收入", tone: "positive" }
+      : { amountLabel: "暂无变化", rateLabel: "本月暂无收入", tone: "" };
+  }
+  if (comparison.delta > 0) {
+    return {
+      amountLabel: `多收入 ${money(comparison.delta)}`,
+      rateLabel: `较上月增加 ${Math.abs(Math.round(comparison.rate || 0))}%`,
+      tone: "positive"
+    };
+  }
+  if (comparison.delta < 0) {
+    return {
+      amountLabel: `少收入 ${money(Math.abs(comparison.delta))}`,
+      rateLabel: `较上月减少 ${Math.abs(Math.round(comparison.rate || 0))}%`,
+      tone: "negative"
+    };
+  }
+  return { amountLabel: "与上月持平", rateLabel: "收入保持稳定", tone: "" };
 }
 
 function getMerchantRanking(records, monthTotal) {
@@ -2564,7 +3134,6 @@ async function cropCoverImage(src, crop) {
   context.fillStyle = "#eef3ec";
   context.fillRect(0, 0, outputWidth, outputHeight);
   context.drawImage(image, dx, dy, drawWidth, drawHeight);
-  enhanceCanvasForOcr(context, outputWidth, outputHeight);
 
   return canvas.toDataURL("image/jpeg", 0.9);
 }
@@ -2590,24 +3159,6 @@ async function cropOcrImage(src, crop) {
   context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
 
   return canvas.toDataURL("image/jpeg", 0.92);
-}
-
-function enhanceCanvasForOcr(context, width, height) {
-  const imageData = context.getImageData(0, 0, width, height);
-  const data = imageData.data;
-  for (let index = 0; index < data.length; index += 4) {
-    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
-    const contrasted = clamp((gray - 128) * 1.18 + 128, 0, 255);
-    const value = contrasted > 238 ? 255 : contrasted < 28 ? 0 : contrasted;
-    data[index] = value;
-    data[index + 1] = value;
-    data[index + 2] = value;
-  }
-  context.putImageData(imageData, 0, 0);
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
 }
 
 function normalizeOcrCrop(crop) {
@@ -2731,8 +3282,8 @@ function signedMoney(value, type = "expense") {
   return `${type === "income" ? "+" : "-"}${money(Math.abs(Number(value || 0)))}`;
 }
 
-function getCategory(categoryId, type = "expense", expenseCategories = categories) {
-  const source = type === "income" ? incomeCategories : expenseCategories;
+function getCategory(categoryId, type = "expense", expenseCategories = categories, incomeCategoryList = incomeCategories) {
+  const source = type === "income" ? incomeCategoryList : expenseCategories;
   return source.find((entry) => entry.id === categoryId) || source.at(-1);
 }
 
@@ -2766,6 +3317,39 @@ function mergeExpenseCategories(customCategories, categoryOrder = [], keywordOve
     }));
   const other = builtIn.find((category) => category.id === "other");
   const all = [...builtIn.filter((category) => category.id !== "other"), ...validCustom, other];
+  const byId = new Map(all.map((category) => [category.id, category]));
+  const ordered = (Array.isArray(categoryOrder) ? categoryOrder : [])
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+  const orderedIds = new Set(ordered.map((category) => category.id));
+  return [...ordered, ...all.filter((category) => !orderedIds.has(category.id))];
+}
+
+function mergeIncomeCategories(customCategories, categoryOrder = [], categoryOverrides = {}) {
+  const knownIds = new Set(incomeCategories.map((category) => category.id));
+  const builtIn = incomeCategories.map((category) => {
+    const override = categoryOverrides?.[category.id] || {};
+    return {
+      ...category,
+      name: String(override.name || category.name).slice(0, 12),
+      icon: override.icon || category.icon,
+      color: override.color || category.color,
+      custom: false,
+      keywords: Array.isArray(override.keywords) ? override.keywords.filter(Boolean) : category.keywords
+    };
+  });
+  const validCustom = (Array.isArray(customCategories) ? customCategories : [])
+    .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
+    .map((category) => ({
+      id: String(category.id),
+      name: String(category.name).slice(0, 12),
+      color: category.color || "#6f927d",
+      icon: category.icon || "tag",
+      keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : [],
+      custom: true
+    }));
+  const other = builtIn.find((category) => category.id === "income-other");
+  const all = [...builtIn.filter((category) => category.id !== "income-other"), ...validCustom, other];
   const byId = new Map(all.map((category) => [category.id, category]));
   const ordered = (Array.isArray(categoryOrder) ? categoryOrder : [])
     .map((id) => byId.get(id))

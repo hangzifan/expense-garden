@@ -32,7 +32,7 @@ const merchantLabelPattern = /^(?:收款方|收款账户|商户名称|商户全�
 const merchantNoisePattern = /^(?:账单详情|交易详情|付款详情|订单详情|支付成功|付款成功|交易成功|扣款成功|消费成功|收款成功|退款成功|当前状态|交易状态|已完成|完成|查看详情|全部账单|服务详情|服务通知|服务提醒|账单提醒|交易提醒|消息通知|支付通知|收款通知|商家服务|微信团队|微信支付|支付宝|微信|付款方式.*|支付方式.*|交易时间.*|付款时间.*|创建时间.*|订单号.*|交易号.*|商户单号.*|交易单号.*|使用.*支付|零钱(?:通)?|余额(?:宝)?|银行卡|信用卡|储蓄卡|昨天.*|今天.*|前天.*|上午.*|下午.*|晚上.*|凌晨.*|待确认)$/i;
 const merchantStrongHintPattern = /店|商行|超市|便利|咖啡|餐饮|外卖|公司|企业|中心|医院|药房|地铁|公交|航空|酒店|宾馆|影院|科技|网络|水务|自来水|工作室|服务部|旗舰店|专营店/i;
 
-export function parseExpenseText(rawText, expenseCategories = categories) {
+export function parseExpenseText(rawText, expenseCategories = categories, incomeCategorySource = incomeCategories) {
   const raw = normalizeOcrText(rawText);
   const compact = raw.replace(/\s+/g, " ").trim();
   const lines = splitUsefulLines(raw);
@@ -41,7 +41,7 @@ export function parseExpenseText(rawText, expenseCategories = categories) {
   const amount = extractAmount(raw, compact, lines);
   const { date, time } = extractDateTime(raw);
   const merchant = extractMerchant(compact, lines);
-  const category = suggestCategory(`${merchant} ${raw}`, type, expenseCategories);
+  const category = suggestCategory(`${merchant} ${raw}`, type, expenseCategories, incomeCategorySource);
   const confidence = scoreConfidence({ amount, merchant, date, time, method });
 
   return {
@@ -59,10 +59,10 @@ export function parseExpenseText(rawText, expenseCategories = categories) {
   };
 }
 
-export function suggestCategory(text, type = "expense", expenseCategories = categories) {
+export function suggestCategory(text, type = "expense", expenseCategories = categories, incomeCategorySource = incomeCategories) {
   const haystack = String(text || "").toLowerCase();
   const source = type === "income"
-    ? incomeCategories
+    ? incomeCategorySource
     : [...expenseCategories].sort((a, b) => Number(Boolean(b.custom)) - Number(Boolean(a.custom)));
   const matched = source.find((category) =>
     category.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()))

@@ -51,8 +51,10 @@ final class XzbNotificationStore {
             try {
                 String raw = readFile(file);
                 JSONObject item = new JSONObject(raw);
-                if (XzbPaymentNotificationService.isStoredNotificationAccepted(
+                boolean accepted = item.optBoolean("accepted", false);
+                if (accepted || XzbPaymentNotificationService.isStoredNotificationAccepted(
                     item.optString("packageName", ""),
+                    item.optString("title", ""),
                     item.optString("rawText", "")
                 )) {
                     items.put(item);

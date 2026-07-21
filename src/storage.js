@@ -50,9 +50,12 @@ function createDefaultState() {
       coverImage: "",
       darkMode: false,
       customExpenseCategories: [],
+      customIncomeCategories: [],
       categoryOrder: [],
+      incomeCategoryOrder: [],
       categoryKeywordOverrides: {},
-      categoryOverrides: {}
+      categoryOverrides: {},
+      incomeCategoryOverrides: {}
     }
   };
 }
@@ -73,14 +76,28 @@ function normalizeState(state) {
             keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : []
           }))
         : [],
+      customIncomeCategories: Array.isArray(state?.settings?.customIncomeCategories)
+        ? state.settings.customIncomeCategories
+          .filter((category) => category?.id && category?.name)
+          .map((category) => ({
+            ...category,
+            keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : []
+          }))
+        : [],
       categoryOrder: Array.isArray(state?.settings?.categoryOrder)
         ? state.settings.categoryOrder.filter(Boolean)
+        : [],
+      incomeCategoryOrder: Array.isArray(state?.settings?.incomeCategoryOrder)
+        ? state.settings.incomeCategoryOrder.filter(Boolean)
         : [],
       categoryKeywordOverrides: state?.settings?.categoryKeywordOverrides && typeof state.settings.categoryKeywordOverrides === "object"
         ? state.settings.categoryKeywordOverrides
         : {},
       categoryOverrides: state?.settings?.categoryOverrides && typeof state.settings.categoryOverrides === "object"
         ? state.settings.categoryOverrides
+        : {},
+      incomeCategoryOverrides: state?.settings?.incomeCategoryOverrides && typeof state.settings.incomeCategoryOverrides === "object"
+        ? state.settings.incomeCategoryOverrides
         : {}
     }
   };
