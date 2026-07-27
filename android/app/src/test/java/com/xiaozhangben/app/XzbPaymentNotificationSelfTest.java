@@ -10,7 +10,7 @@ public final class XzbPaymentNotificationSelfTest {
 
     public static void main(String[] args) {
         runChecks();
-        System.out.println("notification classifier: 18 checks passed");
+        System.out.println("notification classifier: 23 checks passed");
     }
 
     @Test
@@ -26,6 +26,9 @@ public final class XzbPaymentNotificationSelfTest {
         expect(null, WECHAT, "收款助手", "收款方：早餐店\n¥8.50\n交易时间 08:21");
         expect(null, ALIPAY, "支付宝", "支付宝\n你有一笔15元支出\n商户：杭州地铁");
         expect(null, ALIPAY, "服务提醒", "商户：地铁出行\n支付金额 ¥3.00\n订单 20260718");
+        // Relies specifically on the trusted Alipay title branch: amount and
+        // receipt details exist, but no transaction keyword is near the amount.
+        expect(null, ALIPAY, "支付宝", "商户：社区超市\n订单号：20260727001\n金额：¥18.00");
         expect("ad_filtered", WECHAT, "购物助手", "限时优惠，支付9.9元即可领券");
         expect("ad_filtered", ALIPAY, "支付宝", "限时活动，支付9.9元领取优惠券");
         expect("weak_signal", WECHAT, "好友小王", "我刚支付了20元");
@@ -33,10 +36,14 @@ public final class XzbPaymentNotificationSelfTest {
         expect("missing_amount", WECHAT, "微信支付", "付款成功");
         expectAmount(28.80, "微信支付\n付款成功 ¥28.80\n收款方：茶百道");
         expectAmount(15.00, "支付宝\n支出 15.00 元");
+        expectAmount(20.00, "微信支付\n支付成功 ¥20.00\n账户余额 100.00元");
         expectMerchant("茶百道", "微信支付\n付款成功 ¥28.80\n收款方：茶百道", "微信支付");
         expectMerchant("杭州地铁", "支付宝\n支出 ¥3.00\n商户：杭州地铁", "支付宝");
         expectMerchant("", "微信支付\n付款成功 ¥28.80", "微信支付");
         expectMerchant("", "支付宝\n支出 ¥15.00", "支付宝");
+        expectText("微信", XzbPaymentNotificationService.getAppNameForTest(WECHAT));
+        expectText("支付宝", XzbPaymentNotificationService.getAppNameForTest(ALIPAY));
+        expectText("第一段\n第二段", XzbPaymentNotificationService.mergeTextForTest("第一段", "第二段"));
     }
 
     private static void expect(String expected, String packageName, String title, String rawText) {
@@ -57,6 +64,12 @@ public final class XzbPaymentNotificationSelfTest {
         String actual = XzbPaymentNotificationService.extractMerchantForTest(rawText, title);
         if (!expected.equals(actual)) {
             throw new AssertionError("expected merchant=" + expected + ", actual=" + actual + ", text=" + rawText);
+        }
+    }
+
+    private static void expectText(String expected, String actual) {
+        if (!expected.equals(actual)) {
+            throw new AssertionError("expected text=" + expected + ", actual=" + actual);
         }
     }
 }

@@ -3,24 +3,45 @@ import { coverPresets, themes } from "./data.js";
 const STORE_KEY = "expense-garden-state-v1";
 const STORE_BACKUP_KEY = `${STORE_KEY}.backup`;
 const STORE_PREVIOUS_KEY = `${STORE_KEY}.previous`;
+const STORE_COVER_KEY = `${STORE_KEY}.cover`;
 const STORE_CORRUPT_PREFIX = `${STORE_KEY}.corrupt`;
+// Marker persisted in place of the cover data URL so the large image is
+// written once to its own key instead of three times with every save.
+const COVER_STORED_MARKER = "__stored-cover__";
+const BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+
+let lastBackupAt = 0;
 
 export function loadState() {
   const primary = readStoredState(STORE_KEY);
-  if (primary.ok) return primary.state;
+  if (primary.ok) return resolveCover(primary.state);
   if (primary.raw) preserveCorruptState(primary.raw);
 
   const backup = readStoredState(STORE_BACKUP_KEY);
-  if (backup.ok) return backup.state;
+  if (backup.ok) return resolveCover(backup.state);
 
   const previous = readStoredState(STORE_PREVIOUS_KEY);
-  if (previous.ok) return previous.state;
+  if (previous.ok) return resolveCover(previous.state);
 
   return createDefaultState();
 }
 
+export function hasStoredState() {
+  return readStoredState(STORE_KEY).ok
+    || readStoredState(STORE_BACKUP_KEY).ok
+    || readStoredState(STORE_PREVIOUS_KEY).ok;
+}
+
+export function parseBackupPayload(raw) {
+  try {
+    return resolveCover(normalizeState(JSON.parse(raw)));
+  } catch {
+    return null;
+  }
+}
+
 function readStoredState(key) {
-  const raw = localStorage.getItem(key);
+  const raw = readStoredItem(key);
   if (!raw) return { ok: false, raw: "" };
 
   try {
@@ -28,6 +49,14 @@ function readStoredState(key) {
   } catch {
     return { ok: false, raw };
   }
+}
+
+function resolveCover(state) {
+  if (state.settings.coverImage !== COVER_STORED_MARKER) return state;
+  return {
+    ...state,
+    settings: { ...state.settings, coverImage: readStoredItem(STORE_COVER_KEY) }
+  };
 }
 
 function preserveCorruptState(raw) {
@@ -104,7 +133,8 @@ function normalizeState(state) {
 }
 
 function normalizeEntry(entry) {
-  const type = entry?.type === "income" ? "income" : "expense";
+  // Historical builds stored the Chinese label as the record type.
+  const type = entry?.type === "income" || entry?.type === "收入" ? "income" : "expense";
   return {
     ...entry,
     type,
@@ -113,23 +143,34 @@ function normalizeEntry(entry) {
 }
 
 export function saveState(state) {
-  const serialized = JSON.stringify(state);
-  const current = localStorage.getItem(STORE_KEY);
+  const coverImage = String(state?.settings?.coverImage || "");
+  const hasCover = Boolean(coverImage) && coverImage !== COVER_STORED_MARKER;
+  if (hasCover) writeStoredItem(STORE_COVER_KEY, coverImage);
+  if (!coverImage) removeStoredItem(STORE_COVER_KEY);
+  const persisted = hasCover
+    ? { ...state, settings: { ...state.settings, coverImage: COVER_STORED_MARKER } }
+    : state;
+  const serialized = JSON.stringify(persisted);
 
-  try {
-    if (current) localStorage.setItem(STORE_PREVIOUS_KEY, current);
-  } catch {
-    removeStoredItem(STORE_PREVIOUS_KEY);
-  }
-
-  try {
-    localStorage.setItem(STORE_BACKUP_KEY, serialized);
-  } catch {
-    removeStoredItem(STORE_PREVIOUS_KEY);
+  const now = Date.now();
+  if (now - lastBackupAt >= BACKUP_INTERVAL_MS || !readStoredItem(STORE_BACKUP_KEY)) {
+    const current = readStoredItem(STORE_KEY);
+    try {
+      if (current) localStorage.setItem(STORE_PREVIOUS_KEY, current);
+    } catch {
+      removeStoredItem(STORE_PREVIOUS_KEY);
+    }
     try {
       localStorage.setItem(STORE_BACKUP_KEY, serialized);
+      lastBackupAt = now;
     } catch {
-      removeStoredItem(STORE_BACKUP_KEY);
+      removeStoredItem(STORE_PREVIOUS_KEY);
+      try {
+        localStorage.setItem(STORE_BACKUP_KEY, serialized);
+        lastBackupAt = now;
+      } catch {
+        removeStoredItem(STORE_BACKUP_KEY);
+      }
     }
   }
 
@@ -143,6 +184,22 @@ export function saveState(state) {
     } catch {
       // Avoid crashing the UI if the browser storage quota is exhausted.
     }
+  }
+}
+
+function readStoredItem(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The cover image is decorative; losing it must never block ledger saves.
   }
 }
 

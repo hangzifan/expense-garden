@@ -5,6 +5,8 @@ import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.util.Base64;
 import androidx.activity.result.ActivityResult;
@@ -19,32 +21,17 @@ import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
-import java.util.ArrayList;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name = "XzbOcr")
 public class XzbOcrPlugin extends Plugin {
     private static final int MAX_PICKED_IMAGES = 12;
-
-    @PluginMethod
-    public void pickImageAndRecognize(PluginCall call) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        startActivityForResult(call, intent, "pickImageResult");
-    }
-
-    @PluginMethod
-    public void pickImage(PluginCall call) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        startActivityForResult(call, intent, "pickImageOnlyResult");
-    }
+    // Decode/enhance work runs off the WebView and UI threads; ML Kit callbacks stay async.
+    private static final ExecutorService OCR_EXECUTOR = Executors.newSingleThreadExecutor();
 
     @PluginMethod
     public void pickImages(PluginCall call) {
@@ -54,16 +41,6 @@ public class XzbOcrPlugin extends Plugin {
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(call, intent, "pickImagesResult");
-    }
-
-    @PluginMethod
-    public void pickImagesAndRecognize(PluginCall call) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        startActivityForResult(call, intent, "pickImagesRecognizeResult");
     }
 
     @PluginMethod
@@ -79,18 +56,21 @@ public class XzbOcrPlugin extends Plugin {
         if (commaIndex >= 0) {
             base64 = dataUrl.substring(commaIndex + 1);
         }
+        final String payload = base64;
 
-        try {
-            byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
-            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-            if (bitmap == null) {
-                call.reject("无法读取图片内容");
-                return;
+        OCR_EXECUTOR.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(payload, Base64.DEFAULT);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bitmap == null) {
+                    call.reject("无法读取图片内容");
+                    return;
+                }
+                processBitmap(call, bitmap, null);
+            } catch (IllegalArgumentException error) {
+                call.reject("图片格式不正确", error);
             }
-            processBitmap(call, bitmap, null);
-        } catch (IllegalArgumentException error) {
-            call.reject("图片格式不正确", error);
-        }
+        });
     }
 
     @PluginMethod
@@ -101,59 +81,18 @@ public class XzbOcrPlugin extends Plugin {
             return;
         }
 
-        try {
-            Bitmap bitmap = decodeUriBitmap(Uri.parse(uriValue));
-            Bitmap cropped = cropBitmap(bitmap, call.getObject("crop"));
-            if (cropped != bitmap) {
-                safeRecycle(bitmap);
+        OCR_EXECUTOR.execute(() -> {
+            try {
+                Bitmap bitmap = decodeUriBitmap(Uri.parse(uriValue));
+                Bitmap cropped = cropBitmap(bitmap, call.getObject("crop"));
+                if (cropped != bitmap) {
+                    safeRecycle(bitmap);
+                }
+                processBitmap(call, cropped, uriValue);
+            } catch (IOException | IllegalArgumentException error) {
+                call.reject("读取裁剪图片失败", error);
             }
-            processBitmap(call, cropped, uriValue);
-        } catch (IOException | IllegalArgumentException error) {
-            call.reject("读取裁剪图片失败", error);
-        }
-    }
-
-    @ActivityCallback
-    private void pickImageResult(PluginCall call, ActivityResult result) {
-        if (call == null) {
-            return;
-        }
-
-        Intent data = result.getData();
-        if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
-            call.reject("没有选择图片");
-            return;
-        }
-
-        Uri uri = data.getData();
-        persistReadPermission(data, uri);
-        try {
-            Bitmap bitmap = decodeUriBitmap(uri);
-            processBitmap(call, bitmap, uri.toString());
-        } catch (IOException error) {
-            call.reject("读取图片失败", error);
-        }
-    }
-
-    @ActivityCallback
-    private void pickImageOnlyResult(PluginCall call, ActivityResult result) {
-        if (call == null) {
-            return;
-        }
-
-        Intent data = result.getData();
-        if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
-            call.reject("没有选择图片");
-            return;
-        }
-
-        Uri uri = data.getData();
-        persistReadPermission(data, uri);
-        try {
-            call.resolve(readImageAsObject(uri));
-        } catch (IOException error) {
-            call.reject("读取图片失败", error);
-        }
+        });
     }
 
     @ActivityCallback
@@ -168,82 +107,36 @@ public class XzbOcrPlugin extends Plugin {
             return;
         }
 
-        try {
-            JSArray images = new JSArray();
-            ClipData clipData = data.getClipData();
-            if (clipData != null) {
-                int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
-                for (int i = 0; i < count; i++) {
-                    Uri uri = clipData.getItemAt(i).getUri();
-                    if (uri != null) {
-                        persistReadPermission(data, uri);
-                        images.put(readImageMetadata(uri));
+        OCR_EXECUTOR.execute(() -> {
+            try {
+                JSArray images = new JSArray();
+                ClipData clipData = data.getClipData();
+                if (clipData != null) {
+                    int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
+                    for (int i = 0; i < count; i++) {
+                        Uri uri = clipData.getItemAt(i).getUri();
+                        if (uri != null) {
+                            persistReadPermission(data, uri);
+                            images.put(readImageMetadata(uri));
+                        }
                     }
+                } else if (data.getData() != null) {
+                    persistReadPermission(data, data.getData());
+                    images.put(readImageMetadata(data.getData()));
                 }
-            } else if (data.getData() != null) {
-                persistReadPermission(data, data.getData());
-                images.put(readImageMetadata(data.getData()));
-            }
 
-            if (images.length() == 0) {
-                call.reject("没有读到图片内容");
-                return;
-            }
+                if (images.length() == 0) {
+                    call.reject("没有读到图片内容");
+                    return;
+                }
 
-            JSObject ret = new JSObject();
-            ret.put("images", images);
-            call.resolve(ret);
-        } catch (IOException error) {
-            call.reject("读取图片失败", error);
-        }
-    }
-
-    @ActivityCallback
-    private void pickImagesRecognizeResult(PluginCall call, ActivityResult result) {
-        if (call == null) {
-            return;
-        }
-
-        Intent data = result.getData();
-        if (result.getResultCode() != Activity.RESULT_OK || data == null) {
-            call.reject("没有选择图片");
-            return;
-        }
-
-        ArrayList<Uri> uris = collectImageUris(data);
-        if (uris.isEmpty()) {
-            call.reject("没有读到图片内容");
-            return;
-        }
-        for (Uri uri : uris) {
-            persistReadPermission(data, uri);
-        }
-
-        TextRecognizer recognizer = TextRecognition.getClient(
-            new ChineseTextRecognizerOptions.Builder().build()
-        );
-        recognizeUriAt(call, recognizer, uris, 0, new JSArray());
-    }
-
-    private void processImage(PluginCall call, InputImage image, String uri) {
-        TextRecognizer recognizer = TextRecognition.getClient(
-            new ChineseTextRecognizerOptions.Builder().build()
-        );
-
-        recognizer.process(image)
-            .addOnSuccessListener(text -> {
                 JSObject ret = new JSObject();
-                ret.put("text", text.getText());
-                if (uri != null) {
-                    ret.put("uri", uri);
-                }
+                ret.put("images", images);
                 call.resolve(ret);
-                recognizer.close();
-            })
-            .addOnFailureListener(error -> {
-                call.reject("OCR 识别失败", error);
-                recognizer.close();
-            });
+            } catch (IOException error) {
+                call.reject("读取图片失败", error);
+            }
+        });
     }
 
     private void processBitmap(PluginCall call, Bitmap bitmap, String uri) {
@@ -306,36 +199,6 @@ public class XzbOcrPlugin extends Plugin {
         recognizer.close();
     }
 
-    private byte[] readUriBytes(Uri uri) throws IOException {
-        try (InputStream input = getContext().getContentResolver().openInputStream(uri);
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            if (input == null) {
-                throw new IOException("openInputStream returned null");
-            }
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                output.write(buffer, 0, read);
-            }
-            return output.toByteArray();
-        }
-    }
-
-    private ArrayList<Uri> collectImageUris(Intent data) {
-        ArrayList<Uri> uris = new ArrayList<>();
-        ClipData clipData = data.getClipData();
-        if (clipData != null) {
-            int count = Math.min(clipData.getItemCount(), MAX_PICKED_IMAGES);
-            for (int i = 0; i < count; i++) {
-                Uri uri = clipData.getItemAt(i).getUri();
-                if (uri != null) uris.add(uri);
-            }
-        } else if (data.getData() != null) {
-            uris.add(data.getData());
-        }
-        return uris;
-    }
-
     private void persistReadPermission(Intent data, Uri uri) {
         if (data == null || uri == null) return;
         int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
@@ -349,74 +212,49 @@ public class XzbOcrPlugin extends Plugin {
         }
     }
 
-    private void recognizeUriAt(PluginCall call, TextRecognizer recognizer, ArrayList<Uri> uris, int index, JSArray results) {
-        if (index >= uris.size()) {
-            JSObject ret = new JSObject();
-            ret.put("results", results);
-            call.resolve(ret);
-            recognizer.close();
-            return;
-        }
-
-        Uri uri = uris.get(index);
-        try {
-            Bitmap bitmap = decodeUriBitmap(uri);
-            Bitmap ocrBitmap = prepareBitmapForOcr(bitmap);
-            if (ocrBitmap != bitmap) {
-                safeRecycle(bitmap);
-            }
-            InputImage image = InputImage.fromBitmap(ocrBitmap, 0);
-            recognizer.process(image)
-                .addOnSuccessListener(text -> {
-                    JSObject item = new JSObject();
-                    item.put("uri", uri.toString());
-                    item.put("text", text.getText());
-                    results.put(item);
-                    safeRecycle(ocrBitmap);
-                    recognizeUriAt(call, recognizer, uris, index + 1, results);
-                })
-                .addOnFailureListener(error -> {
-                    JSObject item = new JSObject();
-                    item.put("uri", uri.toString());
-                    item.put("text", "");
-                    item.put("error", error.getMessage());
-                    results.put(item);
-                    safeRecycle(ocrBitmap);
-                    recognizeUriAt(call, recognizer, uris, index + 1, results);
-                });
-        } catch (IOException error) {
-            JSObject item = new JSObject();
-            item.put("uri", uri.toString());
-            item.put("text", "");
-            item.put("error", error.getMessage());
-            results.put(item);
-            recognizeUriAt(call, recognizer, uris, index + 1, results);
-        }
-    }
-
     private Bitmap decodeUriBitmap(Uri uri) throws IOException {
+        int rotationDegrees = readExifRotation(uri);
+        Bitmap bitmap;
         try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
             if (input == null) {
                 throw new IOException("openInputStream returned null");
             }
-            Bitmap bitmap = BitmapFactory.decodeStream(input);
-            if (bitmap == null) {
-                throw new IOException("Unable to decode bitmap");
-            }
+            bitmap = BitmapFactory.decodeStream(input);
+        }
+        if (bitmap == null) {
+            throw new IOException("Unable to decode bitmap");
+        }
+        if (rotationDegrees == 0) {
             return bitmap;
         }
+        Matrix matrix = new Matrix();
+        matrix.postRotate(rotationDegrees);
+        Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        if (rotated != bitmap) {
+            safeRecycle(bitmap);
+        }
+        return rotated;
     }
 
-    private JSObject readImageAsObject(Uri uri) throws IOException {
-        String mimeType = getContext().getContentResolver().getType(uri);
-        if (mimeType == null || mimeType.trim().isEmpty()) {
-            mimeType = "image/jpeg";
+    // Camera photos of paper receipts carry EXIF orientation; screenshots are unaffected.
+    private int readExifRotation(Uri uri) {
+        try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+            if (input == null) return 0;
+            ExifInterface exif = new ExifInterface(input);
+            int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    return 90;
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    return 180;
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    return 270;
+                default:
+                    return 0;
+            }
+        } catch (IOException error) {
+            return 0;
         }
-        byte[] bytes = readUriBytes(uri);
-        JSObject ret = new JSObject();
-        ret.put("uri", uri.toString());
-        ret.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
-        return ret;
     }
 
     private JSObject readImageMetadata(Uri uri) throws IOException {
@@ -447,15 +285,6 @@ public class XzbOcrPlugin extends Plugin {
         if (preview != source) safeRecycle(preview);
         safeRecycle(source);
         return ret;
-    }
-
-    private Bitmap prepareBitmapForOcr(Bitmap bitmap) {
-        Bitmap scaled = scaleBitmapForOcr(bitmap);
-        Bitmap enhanced = enhanceBitmapForOcr(scaled);
-        if (enhanced != scaled && scaled != bitmap) {
-            safeRecycle(scaled);
-        }
-        return enhanced;
     }
 
     private Bitmap scaleBitmapForOcr(Bitmap bitmap) {

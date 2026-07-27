@@ -135,7 +135,9 @@ final class XzbMerchantProfileStore {
 
     private static int hourOf(long timestamp) {
         if (timestamp <= 0) return -1;
-        return new java.util.Date(timestamp).getHours();
+        java.util.Calendar calendar = java.util.Calendar.getInstance();
+        calendar.setTimeInMillis(timestamp);
+        return calendar.get(java.util.Calendar.HOUR_OF_DAY);
     }
 
     private static int weekdayOf(long timestamp) {

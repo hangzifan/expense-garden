@@ -166,14 +166,11 @@ public class XzbNotifyPlugin extends Plugin {
     private JSObject buildStatus() {
         boolean enabled = isAccessEnabled();
         boolean connected = XzbPaymentNotificationService.isListenerConnected();
-        boolean rebindRequested = enabled && !connected
-            && XzbNotificationConnectionManager.requestRebind(getContext(), false);
         JSObject result = new JSObject();
         JSONObject capture = XzbPaymentNotificationService.getCaptureStatus(getContext());
         result.put("enabled", enabled);
         result.put("connected", connected);
         result.put("recovering", enabled && !connected);
-        result.put("rebindRequested", rebindRequested);
         result.put("quickConfirmEnabled", XzbQuickConfirmationNotifier.isEnabled(getContext()));
         result.put("lastConnectedAt", capture.optLong("lastConnectedAt", 0L));
         result.put("lastDisconnectedAt", capture.optLong("lastDisconnectedAt", 0L));

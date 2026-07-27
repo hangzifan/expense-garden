@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
-import { loadState, readFileAsDataUrl, saveState } from "./storage.js";
+import { hasStoredState, loadState, parseBackupPayload, readFileAsDataUrl, saveState } from "./storage.js";
 import { parseExpenseText } from "./parser.js";
 import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
 import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
@@ -34,6 +34,7 @@ const navItems = [
 
 const XzbOcr = registerPlugin("XzbOcr");
 const XzbNotify = registerPlugin("XzbNotify");
+const XzbBackup = registerPlugin("XzbBackup");
 const recordTypeLabels = { expense: "支出", income: "收入" };
 const defaultOcrCrop = { x: 4, y: 4, width: 92, height: 92 };
 const categoryColors = ["#6f927d", "#4d9fc5", "#ee775d", "#d6a94f", "#d86d84", "#4f77b8", "#9a7ac2", "#7b837d"];
@@ -149,6 +150,8 @@ function pendingFingerprint(entry) {
 
 function App() {
   const initial = useMemo(loadState, []);
+  // Must be captured before the first saveState effect writes default state.
+  const startedFresh = useMemo(() => !hasStoredState(), []);
   const [expenses, setExpenses] = useState(initial.expenses);
   const [pending, setPending] = useState(initial.pending);
   const [settings, setSettings] = useState(initial.settings);
@@ -157,7 +160,10 @@ function App() {
   const [editingId, setEditingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletePendingTarget, setDeletePendingTarget] = useState(null);
+  const nativeBackupTimerRef = useRef(0);
+  const nativeRestoreCheckedRef = useRef(false);
   const canUseNativeNotify = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  const [nativeBackupReady, setNativeBackupReady] = useState(() => !canUseNativeNotify || !startedFresh);
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const expenseCategories = useMemo(
@@ -201,6 +207,36 @@ function App() {
   useEffect(() => {
     saveState(appState);
   }, [appState]);
+
+  // Mirror the ledger into the app's private files dir so WebView storage
+  // loss (engine update, cleaner apps) does not wipe the user's records.
+  useEffect(() => {
+    if (!canUseNativeNotify || !nativeBackupReady) return undefined;
+    window.clearTimeout(nativeBackupTimerRef.current);
+    nativeBackupTimerRef.current = window.setTimeout(() => {
+      XzbBackup.save({ data: JSON.stringify(appState) }).catch(() => {});
+    }, 4000);
+    return () => window.clearTimeout(nativeBackupTimerRef.current);
+  }, [canUseNativeNotify, nativeBackupReady, appState]);
+
+  useEffect(() => {
+    if (!canUseNativeNotify || nativeRestoreCheckedRef.current) return;
+    nativeRestoreCheckedRef.current = true;
+    // Restore only on a truly fresh start; an intentionally emptied ledger
+    // still has stored state and must never be resurrected.
+    if (!startedFresh) return;
+    XzbBackup.load()
+      .then((result) => {
+        if (!result?.exists || !result?.data) return;
+        const restored = parseBackupPayload(result.data);
+        if (!restored || (!restored.expenses.length && !restored.pending.length)) return;
+        setExpenses(restored.expenses);
+        setPending(restored.pending);
+        setSettings(restored.settings);
+      })
+      .catch(() => {})
+      .finally(() => setNativeBackupReady(true));
+  }, [canUseNativeNotify, startedFresh]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--primary", theme.primary);
@@ -300,13 +336,15 @@ function App() {
   }
 
   function confirmPending(entry) {
+    const amount = Number(entry.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
     const type = entry.type === "income" ? "income" : "expense";
     const expense = {
       ...entry,
       type,
       category: entry.category || (type === "income" ? "income-other" : "other"),
       id: createId("expense"),
-      amount: Number(entry.amount),
+      amount,
       note: entry.note || "",
       source: entry.source || "识别"
     };
@@ -646,6 +684,8 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
   }
 
   useEffect(() => {
+    // The scan screen stays mounted for state retention; only poll while visible.
+    if (hidden) return undefined;
     refreshNotificationPermission();
     const refreshOnReturn = () => {
       if (document.visibilityState === "visible") refreshNotificationPermission();
@@ -653,7 +693,7 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
     const refreshOnFocus = () => refreshNotificationPermission({ silent: true });
     const healthTimer = window.setInterval(() => {
       if (document.visibilityState === "visible") refreshNotificationPermission({ silent: true });
-    }, 20_000);
+    }, 60_000);
     document.addEventListener("visibilitychange", refreshOnReturn);
     window.addEventListener("focus", refreshOnFocus);
     return () => {
@@ -661,7 +701,7 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
       document.removeEventListener("visibilitychange", refreshOnReturn);
       window.removeEventListener("focus", refreshOnFocus);
     };
-  }, [canUseNativeNotify]);
+  }, [canUseNativeNotify, hidden]);
 
   async function pickImageWithNativeOcr() {
     setCandidate(null);
@@ -855,11 +895,6 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
         setStatus("识别失败");
         setImageNotice(error?.message || "OCR 识别失败，请调整裁剪区域后重试。");
       }
-      return;
-    }
-
-    if (rawText.trim()) {
-      recognizeFromText(rawText, "截图识别");
       return;
     }
 
@@ -1947,6 +1982,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   const [coverDraft, setCoverDraft] = useState(null);
   const [coverCrop, setCoverCrop] = useState({ x: 50, y: 50, zoom: 1 });
   const [categoryEditor, setCategoryEditor] = useState(null);
+  const [categoryDeleteTarget, setCategoryDeleteTarget] = useState(null);
   const [iconSearch, setIconSearch] = useState("");
   const [iconGroup, setIconGroup] = useState("all");
   const [draggingCategoryId, setDraggingCategoryId] = useState("");
@@ -2080,7 +2116,13 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   }
 
   function removeCustomCategory(category, type = "expense") {
-    if (!window.confirm(`删除“${category.name}”分类吗？已有账单会归入“其他”。`)) return;
+    // window.confirm is unreliable in some Android WebViews; use the in-app modal.
+    setCategoryDeleteTarget({ category, type });
+  }
+
+  function confirmRemoveCustomCategory() {
+    if (!categoryDeleteTarget) return;
+    const { category, type } = categoryDeleteTarget;
     const isIncome = type === "income";
     setSettings((current) => ({
       ...current,
@@ -2098,6 +2140,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
     setExpenses((items) => items.map((item) => item.category === category.id ? { ...item, category: fallback } : item));
     setPending((items) => items.map((item) => item.category === category.id ? { ...item, category: fallback } : item));
     if (categoryEditor?.id === category.id) setCategoryEditor(null);
+    setCategoryDeleteTarget(null);
   }
 
   function moveCategory(sourceId, targetId, type = "expense") {
@@ -2443,6 +2486,22 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
           onCancel={() => setCoverDraft(null)}
           onCropChange={setCoverCrop}
         />
+      )}
+
+      {categoryDeleteTarget && (
+        <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认删除分类">
+          <section className="confirm-modal">
+            <div>
+              <span>删除分类</span>
+              <h3>删除“{categoryDeleteTarget.category.name}”吗？</h3>
+              <p>已有账单会归入“其他”。</p>
+            </div>
+            <div className="confirm-actions">
+              <button className="secondary-button" type="button" onClick={() => setCategoryDeleteTarget(null)}>取消</button>
+              <button className="danger-button" type="button" onClick={confirmRemoveCustomCategory}>删除</button>
+            </div>
+          </section>
+        </div>
       )}
     </>
   );

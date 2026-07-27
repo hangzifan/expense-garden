@@ -38,7 +38,7 @@ public class XzbPaymentNotificationService extends NotificationListenerService {
         Pattern.CASE_INSENSITIVE
     );
     private static final Pattern STRONG_TRANSACTION_PATTERN = Pattern.compile(
-        "(?:\\u4ed8\\u6b3e|\\u652f\\u4ed8|\\u6d88\\u8d39|\\u6263\\u6b3e|\\u4ea4\\u6613).{0,4}(?:\\u6210\\u529f|\\u5b8c\\u6210|\\u5df2\\u5b8c\\u6210)|(?:\\u5df2\\u4ed8\\u6b3e|\\u5df2\\u652f\\u4ed8|\\u5df2\\u6263\\u6b3e|\\u5b9e\\u4ed8|\\u652f\\u51fa)|(?:\\u6536\\u6b3e|\\u5230\\u8d26|\\u5165\\u8d26|\\u9000\\u6b3e|\\u8f6c\\u8f6c\\u8d26).{0,6}(?:\\u6210\\u529f|\\u5230\\u8d26|\\u5165\\u8d26|\\u5df2\\u6536\\u6b3e)|(?:\\u6536\\u5230.{0,12}\\u8f6c\\u8d26)",
+        "(?:\\u4ed8\\u6b3e|\\u652f\\u4ed8|\\u6d88\\u8d39|\\u6263\\u6b3e|\\u4ea4\\u6613).{0,4}(?:\\u6210\\u529f|\\u5b8c\\u6210|\\u5df2\\u5b8c\\u6210)|(?:\\u5df2\\u4ed8\\u6b3e|\\u5df2\\u652f\\u4ed8|\\u5df2\\u6263\\u6b3e|\\u5b9e\\u4ed8|\\u652f\\u51fa)|(?:\\u6536\\u6b3e|\\u5230\\u8d26|\\u5165\\u8d26|\\u9000\\u6b3e|\\u8f6c\\u8d26).{0,6}(?:\\u6210\\u529f|\\u5230\\u8d26|\\u5165\\u8d26|\\u5df2\\u6536\\u6b3e)|(?:\\u6536\\u5230.{0,12}\\u8f6c\\u8d26)",
         Pattern.CASE_INSENSITIVE
     );
     private static final Pattern TRANSACTION_CONTEXT_PATTERN = Pattern.compile(
@@ -453,19 +453,48 @@ public class XzbPaymentNotificationService extends NotificationListenerService {
         return extractMerchant(rawText, title);
     }
 
+    static String getAppNameForTest(String packageName) {
+        return getAppName(packageName);
+    }
+
+    static String mergeTextForTest(String first, String second) {
+        return mergeUniqueText(first, second);
+    }
+
     private static double extractAmount(String rawText) {
-        Matcher matcher = AMOUNT_PATTERN.matcher(rawText == null ? "" : rawText);
+        String source = rawText == null ? "" : rawText;
+        Matcher matcher = AMOUNT_PATTERN.matcher(source);
         double best = 0;
+        int bestScore = Integer.MIN_VALUE;
         while (matcher.find()) {
             String value = matcher.group().replaceAll("[^0-9.]", "");
             try {
                 double parsed = Double.parseDouble(value);
-                if (parsed > 0 && parsed < 1_000_000) best = parsed;
+                if (parsed <= 0 || parsed >= 1_000_000) continue;
+                int score = scoreAmountCandidate(source, matcher.start(), matcher.end(), matcher.group());
+                if (score > bestScore) {
+                    best = parsed;
+                    bestScore = score;
+                }
             } catch (NumberFormatException ignored) {
                 // Ignore non-numeric notification fragments.
             }
         }
         return best;
+    }
+
+    private static int scoreAmountCandidate(String source, int start, int end, String token) {
+        int localStart = Math.max(0, start - 20);
+        int localEnd = Math.min(source.length(), end + 20);
+        String context = source.substring(localStart, localEnd);
+        int score = 0;
+        if (token.matches(".*[￥¥元].*")) score += 14;
+        if (context.matches("(?s).*(实付|付款金额|支付金额|交易金额|订单金额|已付款|已支付|支出|扣款|收款金额|到账金额|退款金额).*")) score += 55;
+        else if (TRANSACTION_CONTEXT_PATTERN.matcher(context).find()) score += 24;
+        if (context.matches("(?s).*(余额|剩余|优惠|立减|红包|原价|折扣|可用额度).*")) score -= 70;
+        if (context.matches("(?s).*(订单号|交易号|流水号|编号).*")) score -= 35;
+        if (token.matches(".*\\.[0-9]{1,2}.*")) score += 4;
+        return score;
     }
 
     private static String extractMerchant(String rawText, String title) {
@@ -532,8 +561,8 @@ public class XzbPaymentNotificationService extends NotificationListenerService {
         String value = title == null ? "" : title.trim();
         if ("com.tencent.mm".equals(packageName)) return WECHAT_PAYMENT_TITLE_PATTERN.matcher(value).find();
         if ("com.eg.android.AlipayGphone".equals(packageName)) {
-            return value.contains("\\u652f\\u4ed8\\u5b9d") || value.contains("\\u670d\\u52a1\\u63d0\\u9192")
-                || value.contains("\\u652f\\u4ed8\\u52a9\\u624b") || value.contains("\\u8d26\\u5355");
+            return value.contains("支付宝") || value.contains("服务提醒")
+                || value.contains("支付助手") || value.contains("账单");
         }
         return false;
     }
@@ -564,29 +593,22 @@ public class XzbPaymentNotificationService extends NotificationListenerService {
             || (fingerprint.equals(previous) && System.currentTimeMillis() - acceptedAt < DUPLICATE_WINDOW_MS);
     }
 
-    private void appendUnique(JSONObject target, String key, String value) throws JSONException {
+    private static void appendUnique(JSONObject target, String key, String value) throws JSONException {
         String current = target.optString(key, "");
-        if (current.contains(value)) return;
-        target.put(key, current.isEmpty() ? value : current + "\\n" + value);
+        target.put(key, mergeUniqueText(current, value));
+    }
+
+    private static String mergeUniqueText(String currentValue, String incomingValue) {
+        String current = currentValue == null ? "" : currentValue;
+        String incoming = incomingValue == null ? "" : incomingValue;
+        if (incoming.isEmpty() || current.contains(incoming)) return current;
+        return current.isEmpty() ? incoming : current + "\n" + incoming;
     }
 
     private static String getAppName(String packageName) {
-        if ("com.tencent.mm".equals(packageName)) return "\\u5fae\\u4fe1";
-        if ("com.eg.android.AlipayGphone".equals(packageName)) return "\\u652f\\u4ed8\\u5b9d";
+        if ("com.tencent.mm".equals(packageName)) return "微信";
+        if ("com.eg.android.AlipayGphone".equals(packageName)) return "支付宝";
         return packageName;
-    }
-
-    private static JSONArray exactSuggestion(String merchant, String category) throws JSONException {
-        JSONArray result = new JSONArray();
-        JSONObject item = new JSONObject();
-        item.put("name", merchant);
-        item.put("category", category == null || category.isEmpty() ? "other" : category);
-        item.put("confidence", 98);
-        item.put("score", 100);
-        item.put("samples", 0);
-        item.put("highConfidence", true);
-        result.put(item);
-        return result;
     }
 
     static boolean isListenerConnected() {

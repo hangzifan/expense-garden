@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(XzbOcrPlugin.class);
         registerPlugin(XzbNotifyPlugin.class);
+        registerPlugin(XzbBackupPlugin.class);
         super.onCreate(savedInstanceState);
     }
 
