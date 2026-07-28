@@ -1,4 +1,4 @@
-const CACHE_NAME = "expense-garden-v2";
+const CACHE_NAME = "expense-garden-v3";
 const APP_SHELL = [
   "/",
   "/index.html",

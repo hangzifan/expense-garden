@@ -1,5 +1,10 @@
 apply plugin: 'com.android.application'
 
+// Keep normal builds on the app's current version while allowing a dedicated
+// rollback APK to carry a higher versionCode than the release it replaces.
+def xzbVersionCode = (project.findProperty('xzbVersionCode') ?: '30').toString().toInteger()
+def xzbVersionName = (project.findProperty('xzbVersionName') ?: '1.29').toString()
+
 android {
     namespace = "com.xiaozhangben.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +12,8 @@ android {
         applicationId "com.xiaozhangben.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 29
-        versionName "1.28"
+        versionCode xzbVersionCode
+        versionName xzbVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

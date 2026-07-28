@@ -8,6 +8,7 @@ import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
 import { createId } from "./ids.js";
 import { Search } from "lucide-react";
 import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
+import { AppHeader, Screen } from "./ui.jsx";
 import {
   ChartIcon,
   CheckIcon,
@@ -564,11 +565,11 @@ function HomeScreen({
 
 function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
   return (
-    <Screen>
-      <header className="screen-heading">
-        <p>{editingId ? "编辑记录" : "每日收支"}</p>
-        <h2>{editingId ? "调整这一笔" : "记一笔"}</h2>
-      </header>
+    <Screen className="add-screen">
+      <AppHeader
+        eyebrow={editingId ? "编辑记录" : "每日收支"}
+        title={editingId ? "调整这一笔" : "记一笔"}
+      />
 
       <form className="form" onSubmit={(event) => {
         event.preventDefault();
@@ -1148,11 +1149,8 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
   }
 
   return (
-    <Screen hidden={hidden}>
-      <header className="screen-heading">
-        <p>导入截图</p>
-        <h2>识别后确认</h2>
-      </header>
+    <Screen className="scan-screen" hidden={hidden}>
+      <AppHeader eyebrow="导入截图" title="识别后确认" />
 
       <section className="notification-sync-card">
         <div className="notification-card-heading">
@@ -1731,13 +1729,12 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
 
   return (
     <Screen className="report-screen">
-      <header className="screen-heading report-heading">
-        <div>
-          <p>月度报告</p>
-          <h2>收支概览</h2>
-        </div>
-        <CompactMonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
-      </header>
+      <AppHeader
+        eyebrow="月度报告"
+        title="收支概览"
+        className="report-heading"
+        action={<CompactMonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />}
+      />
 
       <section className="report-overview">
         <div className="report-primary-metric">
@@ -2193,10 +2190,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   return (
     <>
       <Screen>
-        <header className="screen-heading">
-          <p>自定义封面</p>
-          <h2>我的账本</h2>
-        </header>
+        <AppHeader eyebrow="自定义封面" title="我的账本" />
 
         <section className="settings-panel cover-picker">
           <div className="mini-cover" style={getCoverStyle(settings)} />
@@ -2505,10 +2499,6 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
       )}
     </>
   );
-}
-
-function Screen({ children, className = "", hidden = false }) {
-  return <div className={`screen ${className}`.trim()} hidden={hidden}>{children}</div>;
 }
 
 function CoverCropModal({ crop, draft, onApply, onCancel, onCropChange }) {
