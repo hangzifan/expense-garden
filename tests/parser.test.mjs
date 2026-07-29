@@ -50,6 +50,13 @@ test("does not mistake a year for the amount", () => {
   assert.equal(parsed.amount, 15);
 });
 
+test("accepts a large amount only when the payment context is explicit", () => {
+  const explicit = parseExpenseText("支付宝 支付金额：¥128000.00 收款方 某汽车销售公司");
+  const unlabeled = parseExpenseText("订单号 128000 交易完成");
+  assert.equal(explicit.amount, 128000);
+  assert.equal(unlabeled.amount, 0);
+});
+
 test("custom category keywords outrank built-in keywords", () => {
   const custom = [...categories, { id: "pet", name: "宠物", icon: "tag", color: "#000", keywords: ["猫粮"], custom: true }];
   assert.equal(suggestCategory("盒马购买猫粮", "expense", custom), "pet");

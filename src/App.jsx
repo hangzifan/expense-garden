@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
-import { hasStoredState, loadState, parseBackupPayload, readFileAsDataUrl, saveState } from "./storage.js";
+import { hasStoredState, loadState, readFileAsDataUrl } from "./storage.js";
 import { parseExpenseText } from "./parser.js";
 import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
 import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
@@ -9,6 +9,20 @@ import { createId } from "./ids.js";
 import { Search } from "lucide-react";
 import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
 import { AppHeader, Screen } from "./ui.jsx";
+import { useDebouncedLedgerSave, useNativeLedgerBackup } from "./hooks/useLedgerPersistence.js";
+import { useNotificationSync } from "./hooks/useNotificationSync.js";
+import { ExpenseCategoriesContext, IncomeCategoriesContext } from "./categoryContext.js";
+import { CategoryGrid, Field, SegmentedControl, TypeToggle } from "./components/FormControls.jsx";
+import { AddScreen } from "./screens/AddScreen.jsx";
+import {
+  fallbackCategories,
+  getCategory,
+  mergeExpenseCategories,
+  mergeIncomeCategories,
+  parseCategoryKeywords
+} from "./domain/categories.js";
+import { mergePendingEntries, normalizePendingEntry } from "./domain/pending.js";
+import { normalizeNotificationItems } from "./domain/notifications.js";
 import {
   ChartIcon,
   CheckIcon,
@@ -21,9 +35,6 @@ import {
   UserIcon,
   WalletIcon
 } from "./icons.jsx";
-
-const ExpenseCategoriesContext = React.createContext(categories);
-const IncomeCategoriesContext = React.createContext(incomeCategories);
 
 const navItems = [
   { id: "home", label: "首页", icon: WalletIcon },
@@ -51,104 +62,6 @@ const emptyDraft = () => ({
   note: ""
 });
 
-function normalizeNotificationItems(items, expenseCategories = categories, merchantHistory = []) {
-  return (Array.isArray(items) ? items : [])
-    .map((item, index) => {
-      const rawText = String(item?.rawText || "").trim();
-      if (!rawText && !Number(item?.amount)) return null;
-      const base = parseExpenseText(rawText, expenseCategories);
-      const explicitMerchant = String(item?.merchant || "").trim();
-      const parsed = refineWithMerchantMemory(
-        {
-          ...base,
-          ...(Number(item?.amount) > 0 ? { amount: Number(item.amount) } : {}),
-          ...(explicitMerchant && explicitMerchant !== "未识别商户" ? { merchant: explicitMerchant } : {}),
-          ...(item?.category ? { category: item.category } : {})
-        },
-        rawText,
-        merchantHistory
-      );
-      const method = item?.packageName === "com.eg.android.AlipayGphone"
-        ? "支付宝"
-        : item?.packageName === "com.tencent.mm"
-          ? "微信"
-          : parsed.method;
-      const suggestions = Array.isArray(item?.merchantSuggestions)
-        ? item.merchantSuggestions
-        : parsed.merchantSuggestions || [];
-      const merchantMissing = !parsed.merchant || parsed.merchant === "未识别商户";
-
-      return {
-        ...parsed,
-        id: item?.id ? `notice-${item.id}` : createId(`notice-${index}`),
-        notificationId: item?.id || "",
-        method,
-        source: item?.source || "通知识别",
-        rawText,
-        merchantMissing,
-        merchantSuggestions: suggestions,
-        quickConfirmed: Boolean(item?.quickConfirmed),
-        merchantPrediction: Boolean(item?.merchantPrediction),
-        note: merchantMissing
-          ? "通知未包含明确商户，请从候选中选择或手动填写"
-          : item?.merchantPrediction
-            ? "商户由历史消费习惯推测，请确认"
-            : ""
-      };
-    })
-    .filter(Boolean);
-}
-function normalizePendingEntry(entry, index = 0) {
-  if (!entry) return null;
-  const type = entry.type === "income" ? "income" : "expense";
-  return {
-    ...entry,
-    id: entry.id || createId(`pending-${index}`),
-    type,
-    amount: Number(entry.amount || 0),
-    merchant: entry.merchant || "未识别商户",
-    category: entry.category || (type === "income" ? "income-other" : "other"),
-    method: entry.method || "其他",
-    date: entry.date || today(),
-    time: entry.time || currentTime(),
-    note: entry.note || ""
-  };
-}
-
-function mergePendingEntries(current, incoming) {
-  const seenIds = new Set(current.map((item) => item.id));
-  const seenFingerprints = new Set(current.map(pendingFingerprint));
-  const nextIncoming = [];
-
-  for (const entry of incoming) {
-    const normalizedEntry = seenIds.has(entry.id) ? { ...entry, id: createId("pending") } : entry;
-    seenIds.add(normalizedEntry.id);
-    const fingerprint = pendingFingerprint(entry);
-    const duplicateHint = seenFingerprints.has(fingerprint);
-    seenFingerprints.add(fingerprint);
-    nextIncoming.push({
-      ...normalizedEntry,
-      duplicateHint,
-      note: duplicateHint && !normalizedEntry.note ? "可能重复，请核对" : normalizedEntry.note
-    });
-  }
-
-  return [...nextIncoming, ...current];
-}
-
-function pendingFingerprint(entry) {
-  const amount = Number(entry?.amount || 0).toFixed(2);
-  return [
-    entry?.type || "expense",
-    amount,
-    String(entry?.merchant || "").trim(),
-    entry?.date || "",
-    entry?.time || "",
-    entry?.method || "",
-    entry?.source || ""
-  ].join("|");
-}
-
 function App() {
   const initial = useMemo(loadState, []);
   // Must be captured before the first saveState effect writes default state.
@@ -161,10 +74,7 @@ function App() {
   const [editingId, setEditingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletePendingTarget, setDeletePendingTarget] = useState(null);
-  const nativeBackupTimerRef = useRef(0);
-  const nativeRestoreCheckedRef = useRef(false);
   const canUseNativeNotify = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
-  const [nativeBackupReady, setNativeBackupReady] = useState(() => !canUseNativeNotify || !startedFresh);
 
   const theme = themes.find((item) => item.id === settings.themeId) || themes[0];
   const expenseCategories = useMemo(
@@ -204,40 +114,18 @@ function App() {
     () => getMonthStats(monthlyExpenses, settings.budget, selectedMonth, expenseCategories, incomeCategoryList),
     [monthlyExpenses, settings.budget, selectedMonth, expenseCategories, incomeCategoryList]
   );
-
-  useEffect(() => {
-    saveState(appState);
-  }, [appState]);
-
-  // Mirror the ledger into the app's private files dir so WebView storage
-  // loss (engine update, cleaner apps) does not wipe the user's records.
-  useEffect(() => {
-    if (!canUseNativeNotify || !nativeBackupReady) return undefined;
-    window.clearTimeout(nativeBackupTimerRef.current);
-    nativeBackupTimerRef.current = window.setTimeout(() => {
-      XzbBackup.save({ data: JSON.stringify(appState) }).catch(() => {});
-    }, 4000);
-    return () => window.clearTimeout(nativeBackupTimerRef.current);
-  }, [canUseNativeNotify, nativeBackupReady, appState]);
-
-  useEffect(() => {
-    if (!canUseNativeNotify || nativeRestoreCheckedRef.current) return;
-    nativeRestoreCheckedRef.current = true;
-    // Restore only on a truly fresh start; an intentionally emptied ledger
-    // still has stored state and must never be resurrected.
-    if (!startedFresh) return;
-    XzbBackup.load()
-      .then((result) => {
-        if (!result?.exists || !result?.data) return;
-        const restored = parseBackupPayload(result.data);
-        if (!restored || (!restored.expenses.length && !restored.pending.length)) return;
-        setExpenses(restored.expenses);
-        setPending(restored.pending);
-        setSettings(restored.settings);
-      })
-      .catch(() => {})
-      .finally(() => setNativeBackupReady(true));
-  }, [canUseNativeNotify, startedFresh]);
+  const nativeBackupReady = useNativeLedgerBackup({
+    enabled: canUseNativeNotify,
+    startedFresh,
+    state: appState,
+    backupPlugin: XzbBackup,
+    onRestore: (restored) => {
+      setExpenses(restored.expenses);
+      setPending(restored.pending);
+      setSettings(restored.settings);
+    }
+  });
+  useDebouncedLedgerSave(appState, { enabled: nativeBackupReady });
 
   useEffect(() => {
     document.documentElement.style.setProperty("--primary", theme.primary);
@@ -280,40 +168,14 @@ function App() {
     return { confirmedCount: confirmed.length, pendingCount: pendingEntries.length };
   }
 
-  useEffect(() => {
-    if (!canUseNativeNotify) return undefined;
-
-    let stopped = false;
-    const syncNotifications = async () => {
-      try {
-        const enabled = await XzbNotify.isEnabled();
-        if (stopped || !enabled?.enabled) return;
-        if (!enabled.connected) await XzbNotify.reconnect();
-        const result = await XzbNotify.drainNotifications();
-        const entries = normalizeNotificationItems(
-          (result?.items || []).filter((item) => !item?.test),
-          expenseCategories,
-          expenses
-        );
-        if (entries.length) ingestNotificationEntries(entries, { navigate: false });
-      } catch {
-        // Notification access is optional; failed sync should never block bookkeeping.
-      }
-    };
-
-    syncNotifications();
-    const timer = window.setInterval(syncNotifications, 30000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") syncNotifications();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [canUseNativeNotify, expenseCategories, expenses]);
+  useNotificationSync({
+    enabled: canUseNativeNotify,
+    notifyPlugin: XzbNotify,
+    categories: expenseCategories,
+    merchantHistory: expenses,
+    normalizeItems: normalizeNotificationItems,
+    onEntries: ingestNotificationEntries
+  });
 
   function saveExpense(entry) {
     const type = entry.type === "income" ? "income" : "expense";
@@ -559,86 +421,6 @@ function HomeScreen({
         <SectionTitle title="最近记录" aside={formatMonthLabel(selectedMonth)} />
         <ExpenseList items={latest} onEdit={onEdit} onDelete={onDelete} />
       </section>
-    </Screen>
-  );
-}
-
-function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
-  return (
-    <Screen className="add-screen">
-      <AppHeader
-        eyebrow={editingId ? "编辑记录" : "每日收支"}
-        title={editingId ? "调整这一笔" : "记一笔"}
-      />
-
-      <form className="form" onSubmit={(event) => {
-        event.preventDefault();
-        onSave(draft);
-      }}>
-        <Field label="类型">
-          <TypeToggle
-            value={draft.type}
-            onChange={(type) => setDraft({
-              ...draft,
-              type,
-              category: type === "income" ? "salary" : "food"
-            })}
-          />
-        </Field>
-
-        <label className="amount-input">
-          <span>金额</span>
-          <input
-            value={draft.amount}
-            onChange={(event) => setDraft({ ...draft, amount: event.target.value })}
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="0.00"
-          />
-        </label>
-
-        <Field label="商户">
-          <input
-            value={draft.merchant}
-            onChange={(event) => setDraft({ ...draft, merchant: event.target.value })}
-            placeholder={draft.type === "income" ? "例如：工资、退款" : "例如：咖啡店"}
-          />
-        </Field>
-
-        <Field label="分类">
-          <CategoryGrid type={draft.type} value={draft.category} onChange={(category) => setDraft({ ...draft, category })} />
-        </Field>
-
-        <div className="two-columns">
-          <Field label="日期">
-            <input value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} type="date" />
-          </Field>
-          <Field label="时间">
-            <input value={draft.time} onChange={(event) => setDraft({ ...draft, time: event.target.value })} type="time" />
-          </Field>
-        </div>
-
-        <Field label="支付方式">
-          <SegmentedControl value={draft.method} options={methods} onChange={(method) => setDraft({ ...draft, method })} />
-        </Field>
-
-        <Field label="备注">
-          <textarea
-            value={draft.note}
-            onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-            placeholder="可选"
-          />
-        </Field>
-
-        <div className="form-actions">
-          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="primary-button" type="submit">
-            <CheckIcon />
-            {editingId ? "保存修改" : "保存"}
-          </button>
-        </div>
-      </form>
     </Screen>
   );
 }
@@ -1490,6 +1272,8 @@ function BatchCandidateEditor({ candidates, setCandidates, onSave, onCancel }) {
 }
 
 function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
+  const expenseCategories = useContext(ExpenseCategoriesContext);
+  const incomeCategoryList = useContext(IncomeCategoriesContext);
   return (
     <section className="candidate-card">
       <div className="candidate-head">
@@ -1505,7 +1289,9 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
           onChange={(type) => setCandidate({
             ...candidate,
             type,
-            category: type === "income" ? "salary" : "food"
+            category: type === "income"
+              ? incomeCategoryList[0]?.id || fallbackCategories.income.id
+              : expenseCategories[0]?.id || fallbackCategories.expense.id
           })}
         />
       </Field>
@@ -2814,72 +2600,6 @@ function CompactMonthPicker({ value, max, onChange }) {
   );
 }
 
-function Field({ label, children }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function SegmentedControl({ value, options, onChange }) {
-  return (
-    <div className="segmented">
-      {options.map((option) => (
-        <button
-          key={option}
-          type="button"
-          className={value === option ? "selected" : ""}
-          onClick={() => onChange(option)}
-        >
-          {option}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function TypeToggle({ value, onChange }) {
-  return (
-    <div className="type-toggle">
-      {["expense", "income"].map((type) => (
-        <button
-          key={type}
-          type="button"
-          className={value === type ? "selected" : ""}
-          onClick={() => onChange(type)}
-        >
-          {recordTypeLabels[type]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function CategoryGrid({ value, onChange, compact = false, type = "expense" }) {
-  const expenseCategories = useContext(ExpenseCategoriesContext);
-  const incomeCategoryList = useContext(IncomeCategoriesContext);
-  const categorySource = type === "income" ? incomeCategoryList : expenseCategories;
-  return (
-    <div className={compact ? "category-grid compact" : "category-grid"}>
-      {categorySource.map((category) => (
-        <button
-          key={category.id}
-          type="button"
-          className={value === category.id ? "selected" : ""}
-          onClick={() => onChange(category.id)}
-        >
-          <span className="category-icon" style={{ color: category.color }}>
-            <CategoryIcon name={category.icon} size={18} />
-          </span>
-          <span>{category.name}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) {
   const visibleLength = Math.max(days.length, previousDays.length, 1);
   const max = Math.max(...days.map((day) => day.total), ...previousDays.map((day) => day.total), 1);
@@ -3329,92 +3049,6 @@ function money(value) {
 
 function signedMoney(value, type = "expense") {
   return `${type === "income" ? "+" : "-"}${money(Math.abs(Number(value || 0)))}`;
-}
-
-function getCategory(categoryId, type = "expense", expenseCategories = categories, incomeCategoryList = incomeCategories) {
-  const source = type === "income" ? incomeCategoryList : expenseCategories;
-  return source.find((entry) => entry.id === categoryId) || source.at(-1);
-}
-
-function mergeExpenseCategories(customCategories, categoryOrder = [], keywordOverrides = {}, categoryOverrides = {}) {
-  const knownIds = new Set(categories.map((category) => category.id));
-  const builtIn = categories.map((category) => {
-    const override = categoryOverrides?.[category.id] || {};
-    const overrideKeywords = Array.isArray(override.keywords)
-      ? override.keywords
-      : keywordOverrides?.[category.id];
-    return {
-      ...category,
-      name: String(override.name || category.name).slice(0, 12),
-      icon: override.icon || category.icon,
-      color: override.color || category.color,
-      custom: false,
-      keywords: Array.isArray(overrideKeywords)
-        ? overrideKeywords.filter(Boolean)
-        : category.keywords
-    };
-  });
-  const validCustom = (Array.isArray(customCategories) ? customCategories : [])
-    .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
-    .map((category) => ({
-      id: String(category.id),
-      name: String(category.name).slice(0, 12),
-      color: category.color || "#6f927d",
-      icon: category.icon || "tag",
-      keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : [],
-      custom: true
-    }));
-  const other = builtIn.find((category) => category.id === "other");
-  const all = [...builtIn.filter((category) => category.id !== "other"), ...validCustom, other];
-  const byId = new Map(all.map((category) => [category.id, category]));
-  const ordered = (Array.isArray(categoryOrder) ? categoryOrder : [])
-    .map((id) => byId.get(id))
-    .filter(Boolean);
-  const orderedIds = new Set(ordered.map((category) => category.id));
-  return [...ordered, ...all.filter((category) => !orderedIds.has(category.id))];
-}
-
-function mergeIncomeCategories(customCategories, categoryOrder = [], categoryOverrides = {}) {
-  const knownIds = new Set(incomeCategories.map((category) => category.id));
-  const builtIn = incomeCategories.map((category) => {
-    const override = categoryOverrides?.[category.id] || {};
-    return {
-      ...category,
-      name: String(override.name || category.name).slice(0, 12),
-      icon: override.icon || category.icon,
-      color: override.color || category.color,
-      custom: false,
-      keywords: Array.isArray(override.keywords) ? override.keywords.filter(Boolean) : category.keywords
-    };
-  });
-  const validCustom = (Array.isArray(customCategories) ? customCategories : [])
-    .filter((category) => category?.id && category?.name && !knownIds.has(category.id))
-    .map((category) => ({
-      id: String(category.id),
-      name: String(category.name).slice(0, 12),
-      color: category.color || "#6f927d",
-      icon: category.icon || "tag",
-      keywords: Array.isArray(category.keywords) ? category.keywords.filter(Boolean) : [],
-      custom: true
-    }));
-  const other = builtIn.find((category) => category.id === "income-other");
-  const all = [...builtIn.filter((category) => category.id !== "income-other"), ...validCustom, other];
-  const byId = new Map(all.map((category) => [category.id, category]));
-  const ordered = (Array.isArray(categoryOrder) ? categoryOrder : [])
-    .map((id) => byId.get(id))
-    .filter(Boolean);
-  const orderedIds = new Set(ordered.map((category) => category.id));
-  return [...ordered, ...all.filter((category) => !orderedIds.has(category.id))];
-}
-
-function parseCategoryKeywords(value) {
-  return Array.from(new Set(
-    String(value || "")
-      .split(/[、，,;；\n]+/)
-      .map((keyword) => keyword.trim())
-      .filter(Boolean)
-      .slice(0, 30)
-  ));
 }
 
 function today() {

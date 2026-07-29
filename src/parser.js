@@ -2,6 +2,8 @@ import { categories, incomeCategories } from "./data.js";
 import { createId } from "./ids.js";
 
 const MONEY_VALUE = "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)";
+const MAX_UNLABELED_AMOUNT = 100_000;
+const MAX_EXPLICIT_AMOUNT = 1_000_000_000;
 const amountRegexes = [
   new RegExp(`(?:￥|¥|RMB|CNY)\\s*${MONEY_VALUE}`, "i"),
   /(?:-|−)\s*([0-9][0-9,]*\.[0-9]{1,2})(?=\s|元|$)/i,
@@ -102,7 +104,10 @@ function detectRecordType(text) {
 function extractAmount(raw, compact, lines) {
   for (const regex of amountRegexes) {
     const match = compact.match(regex);
-    if (match) return parseMoney(match[1]);
+    if (match) {
+      const value = parseMoney(match[1]);
+      if (isLikelyMoney(value, match[1], match[0], { explicit: true })) return value;
+    }
   }
 
   const scored = [];
@@ -135,8 +140,9 @@ function parseMoney(value) {
   return Number.parseFloat(String(value || "").replace(/,/g, ""));
 }
 
-function isLikelyMoney(value, rawValue, context) {
-  if (!Number.isFinite(value) || value <= 0 || value >= 100000) return false;
+function isLikelyMoney(value, rawValue, context, { explicit = false } = {}) {
+  const maximum = explicit ? MAX_EXPLICIT_AMOUNT : MAX_UNLABELED_AMOUNT;
+  if (!Number.isFinite(value) || value <= 0 || value >= maximum) return false;
   if (/^20[0-9]{2}$/.test(rawValue)) return false;
   if (/\b[0-9]{4}[-/.年][0-9]{1,2}/.test(context) && value >= 2000 && value <= 2099) return false;
   if (String(rawValue).replace(/\D/g, "").length >= 8 && !rawValue.includes(".")) return false;

@@ -9,8 +9,13 @@ const STORE_CORRUPT_PREFIX = `${STORE_KEY}.corrupt`;
 // written once to its own key instead of three times with every save.
 const COVER_STORED_MARKER = "__stored-cover__";
 const BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+const MAX_BACKUP_LENGTH = 25 * 1024 * 1024;
+const MAX_BACKUP_RECORDS = 100_000;
+const MAX_BACKUP_AMOUNT = 1_000_000_000_000;
+const MAX_TEXT_LENGTH = 10_000;
 
 let lastBackupAt = 0;
+let storedCoverCache;
 
 export function loadState() {
   const primary = readStoredState(STORE_KEY);
@@ -33,8 +38,11 @@ export function hasStoredState() {
 }
 
 export function parseBackupPayload(raw) {
+  if (typeof raw !== "string" || !raw.length || raw.length > MAX_BACKUP_LENGTH) return null;
   try {
-    return resolveCover(normalizeState(JSON.parse(raw)));
+    const parsed = JSON.parse(raw);
+    if (!isValidBackupShape(parsed)) return null;
+    return resolveCover(normalizeState(parsed));
   } catch {
     return null;
   }
@@ -55,8 +63,35 @@ function resolveCover(state) {
   if (state.settings.coverImage !== COVER_STORED_MARKER) return state;
   return {
     ...state,
-    settings: { ...state.settings, coverImage: readStoredItem(STORE_COVER_KEY) }
+    settings: { ...state.settings, coverImage: getStoredCover() }
   };
+}
+
+function isValidBackupShape(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const expenses = value.expenses ?? [];
+  const pending = value.pending ?? [];
+  if (!Array.isArray(expenses) || !Array.isArray(pending)) return false;
+  if (expenses.length + pending.length > MAX_BACKUP_RECORDS) return false;
+  return expenses.every((entry) => isValidBackupEntry(entry, false))
+    && pending.every((entry) => isValidBackupEntry(entry, true));
+}
+
+function isValidBackupEntry(entry, pending) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  const amount = Number(entry.amount);
+  if (!Number.isFinite(amount) || amount < 0 || (!pending && amount <= 0) || amount > MAX_BACKUP_AMOUNT) return false;
+  if (entry.date && !isValidDateText(entry.date)) return false;
+  return ["id", "merchant", "category", "method", "date", "time", "note", "source", "rawText"]
+    .every((key) => entry[key] == null || (typeof entry[key] === "string" && entry[key].length <= MAX_TEXT_LENGTH));
+}
+
+function isValidDateText(value) {
+  const text = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const [year, month, day] = text.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
 function preserveCorruptState(raw) {
@@ -145,8 +180,15 @@ function normalizeEntry(entry) {
 export function saveState(state) {
   const coverImage = String(state?.settings?.coverImage || "");
   const hasCover = Boolean(coverImage) && coverImage !== COVER_STORED_MARKER;
-  if (hasCover) writeStoredItem(STORE_COVER_KEY, coverImage);
-  if (!coverImage) removeStoredItem(STORE_COVER_KEY);
+  const storedCover = getStoredCover();
+  if (hasCover && coverImage !== storedCover) {
+    writeStoredItem(STORE_COVER_KEY, coverImage);
+    storedCoverCache = coverImage;
+  }
+  if (!coverImage && storedCover) {
+    removeStoredItem(STORE_COVER_KEY);
+    storedCoverCache = "";
+  }
   const persisted = hasCover
     ? { ...state, settings: { ...state.settings, coverImage: COVER_STORED_MARKER } }
     : state;
@@ -185,6 +227,11 @@ export function saveState(state) {
       // Avoid crashing the UI if the browser storage quota is exhausted.
     }
   }
+}
+
+function getStoredCover() {
+  if (storedCoverCache === undefined) storedCoverCache = readStoredItem(STORE_COVER_KEY);
+  return storedCoverCache;
 }
 
 function readStoredItem(key) {
