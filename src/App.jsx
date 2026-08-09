@@ -44,9 +44,16 @@ const navItems = [
   { id: "profile", label: "我的", icon: UserIcon }
 ];
 
-const XzbOcr = registerPlugin("XzbOcr");
-const XzbNotify = registerPlugin("XzbNotify");
-const XzbBackup = registerPlugin("XzbBackup");
+// Keep native proxies stable across Vite hot updates. Registering the same
+// Capacitor plugin repeatedly is harmless in production but noisy in browser QA.
+const nativePlugins = globalThis.__expenseGardenNativePlugins || (
+  globalThis.__expenseGardenNativePlugins = {
+    XzbOcr: registerPlugin("XzbOcr"),
+    XzbNotify: registerPlugin("XzbNotify"),
+    XzbBackup: registerPlugin("XzbBackup")
+  }
+);
+const { XzbOcr, XzbNotify, XzbBackup } = nativePlugins;
 const recordTypeLabels = { expense: "支出", income: "收入" };
 const defaultOcrCrop = { x: 4, y: 4, width: 92, height: 92 };
 const categoryColors = ["#6f927d", "#4d9fc5", "#ee775d", "#d6a94f", "#d86d84", "#4f77b8", "#9a7ac2", "#7b837d"];
@@ -369,7 +376,7 @@ function HomeScreen({
           </button>
         </header>
 
-        <div className="cover-panel" style={coverStyle}>
+        <div className="cover-panel" style={coverStyle} aria-label="月度概览">
           <div className="cover-image-area" />
           <div className="cover-data-area">
             <div className="cover-summary-row">
@@ -2523,6 +2530,8 @@ function BottomNav({ activeTab, onTab }) {
             type="button"
             key={item.id}
             className={activeTab === item.id ? "active" : ""}
+            aria-current={activeTab === item.id ? "page" : undefined}
+            data-testid={`nav-${item.id}`}
             onClick={() => onTab(item.id)}
           >
             <Icon />

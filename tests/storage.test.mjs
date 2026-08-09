@@ -69,16 +69,6 @@ test("does not treat corrupt local data as a valid ledger", () => {
   assert.equal(hasStoredState(), false);
 });
 
-test("rejects unsafe native backup records", () => {
-  installStorage();
-  assert.equal(parseBackupPayload(JSON.stringify(stateWith([
-    { id: "negative", amount: -1, merchant: "异常" }
-  ]))), null);
-  assert.equal(parseBackupPayload(JSON.stringify(stateWith([
-    { id: "bad-date", amount: 10, merchant: "异常", date: "2026-02-31" }
-  ]))), null);
-});
-
 test("validates and normalizes the native backup payload", () => {
   installStorage();
   const restored = parseBackupPayload(JSON.stringify(stateWith([
@@ -87,4 +77,14 @@ test("validates and normalizes the native backup payload", () => {
   assert.equal(restored.expenses[0].type, "expense");
   assert.equal(restored.expenses[0].category, "other");
   assert.equal(parseBackupPayload("not json"), null);
+});
+
+test("rejects unsafe native backup records", () => {
+  installStorage();
+  assert.equal(parseBackupPayload(JSON.stringify(stateWith([
+    { id: "negative", amount: -1, merchant: "异常" }
+  ]))), null);
+  assert.equal(parseBackupPayload(JSON.stringify(stateWith([
+    { id: "bad-date", amount: 10, merchant: "异常", date: "2026-02-31" }
+  ]))), null);
 });

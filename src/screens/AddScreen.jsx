@@ -40,8 +40,11 @@ export function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
             value={draft.amount}
             onChange={(event) => setDraft({ ...draft, amount: event.target.value })}
             type="number"
-            min="0"
+            min="0.01"
             step="0.01"
+            inputMode="decimal"
+            required
+            aria-label="金额"
             placeholder="0.00"
           />
         </label>
@@ -68,7 +71,12 @@ export function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
         </div>
 
         <Field label="支付方式">
-          <SegmentedControl value={draft.method} options={methods} onChange={(method) => setDraft({ ...draft, method })} />
+          <SegmentedControl
+            value={draft.method}
+            options={methods}
+            ariaLabel="支付方式"
+            onChange={(method) => setDraft({ ...draft, method })}
+          />
         </Field>
 
         <Field label="备注">
@@ -90,4 +98,3 @@ export function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
     </Screen>
   );
 }
-

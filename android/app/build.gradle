@@ -21,6 +21,15 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Reproducible rollback builds can point at an extracted, versioned web
+    // asset set without replacing the current app sources.
+    if (project.hasProperty('xzbAssetsDir')) {
+        sourceSets {
+            main {
+                assets.srcDirs = [file(project.property('xzbAssetsDir'))]
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false

@@ -1,0 +1,307 @@
+/*
+ * v1.30 front-end foundation
+ * --------------------------
+ * A compact, action-first mobile layout layered over the existing feature CSS.
+ * The cover remains the product signature, but no longer hides bookkeeping.
+ */
+
+:root {
+  --nav-height: 70px;
+  --content-gutter: 17px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --shadow-card: 0 10px 30px rgba(35, 56, 45, 0.08);
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 4%, color-mix(in srgb, var(--primary) 11%, transparent), transparent 30%),
+    var(--bg);
+}
+
+.phone-frame {
+  height: min(900px, calc(100dvh - 32px));
+  min-height: min(720px, calc(100dvh - 32px));
+}
+
+.screen {
+  padding-bottom: 40px;
+  scroll-padding-block: 18px 104px;
+  overscroll-behavior-y: contain;
+}
+
+.screen-heading,
+.topbar,
+.app-page-header {
+  margin-bottom: 16px;
+}
+
+/* Home: the cover works as a dashboard card instead of a full-page splash. */
+.home-screen {
+  padding-top: 17px;
+}
+
+.home-hero {
+  min-height: 0;
+  display: block;
+}
+
+.home-hero .topbar {
+  min-height: 54px;
+}
+
+.cover-panel {
+  flex: none;
+  height: clamp(318px, 43dvh, 380px);
+  min-height: 0;
+  margin-bottom: 12px;
+  border-radius: 24px;
+  box-shadow: 0 18px 44px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+.cover-panel::before {
+  background:
+    linear-gradient(180deg, rgba(17, 35, 26, 0.02) 20%, rgba(17, 35, 26, 0.24) 100%);
+}
+
+.cover-image-area {
+  min-height: 0;
+}
+
+.cover-data-area {
+  inset: auto 12px 12px;
+  min-height: 0;
+  padding: 16px;
+  gap: 12px;
+  border-radius: 18px;
+}
+
+.cover-stat-main strong {
+  font-size: clamp(36px, 10vw, 42px);
+}
+
+.today-chip {
+  min-width: 82px;
+  padding: 7px 0 7px 15px;
+}
+
+.budget-row {
+  margin-top: 0;
+}
+
+.balance-row {
+  margin-top: 8px;
+}
+
+.progress-track {
+  margin-top: 7px;
+}
+
+.scroll-cue {
+  display: none;
+}
+
+.home-below-fold {
+  padding-top: 0;
+}
+
+.quick-grid {
+  margin: 0;
+  gap: 9px;
+}
+
+.action-button {
+  min-height: 56px;
+  box-shadow: var(--shadow-card);
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.action-button:first-child {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+.action-button:active {
+  transform: scale(0.98);
+}
+
+.month-picker {
+  min-height: 50px;
+  margin: 11px 0 2px;
+  box-shadow: none;
+}
+
+.month-picker button {
+  height: 38px;
+}
+
+.month-picker input {
+  min-height: 34px;
+}
+
+.home-screen .section-title:first-of-type {
+  margin-top: 23px;
+}
+
+/* Forms: preserve context, make validation and touch state unambiguous. */
+.field[role="group"] {
+  min-width: 0;
+}
+
+.amount-input {
+  padding: 15px 15px 14px;
+}
+
+.amount-input input {
+  min-height: 54px;
+}
+
+.type-toggle button[aria-pressed="true"],
+.segmented button[aria-pressed="true"] {
+  color: var(--primary);
+}
+
+.category-grid button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--primary) 72%, var(--line));
+}
+
+.field input[aria-invalid="true"],
+.field textarea[aria-invalid="true"],
+.amount-input input:invalid:not(:placeholder-shown) {
+  color: var(--danger);
+}
+
+.add-screen .form-actions {
+  position: static;
+  z-index: auto;
+  margin: 4px 0 0;
+  padding: 0;
+  border-top: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/* Navigation: larger labels and a single authoritative selected state. */
+.bottom-nav {
+  flex-basis: var(--nav-height);
+  height: var(--nav-height);
+  margin-inline: 11px;
+  padding: 6px;
+}
+
+.bottom-nav button {
+  min-height: 56px;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.bottom-nav button.active,
+.bottom-nav button[aria-current="page"] {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--primary) 26%, transparent);
+}
+
+.bottom-nav button:not(.active) {
+  box-shadow: none;
+}
+
+/* Shared surfaces: consistent edge treatment without flattening hierarchy. */
+.pending-card,
+.candidate-card,
+.notification-sync-card,
+.import-panel,
+.chart-panel,
+.settings-panel,
+.report-summary,
+.expense-row,
+.insight,
+.report-overview,
+.report-section {
+  box-shadow: var(--shadow-card);
+}
+
+.empty-line {
+  min-height: 84px;
+}
+
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .action-button:hover,
+  .primary-button:hover,
+  .secondary-button:hover,
+  .icon-button:hover,
+  .row-icon:hover,
+  .ghost-button:hover {
+    transform: translateY(-1px);
+  }
+
+  .bottom-nav button:not(.active):hover {
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    color: var(--text);
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    display: block;
+    padding: 0;
+  }
+
+  .phone-frame {
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    border: 0;
+  }
+
+  .screen {
+    padding-bottom: 36px;
+  }
+
+  .cover-panel {
+    height: clamp(314px, 42dvh, 360px);
+  }
+}
+
+@media (max-width: 365px) {
+  :root {
+    --content-gutter: 13px;
+  }
+
+  .cover-panel {
+    height: 304px;
+  }
+
+  .cover-data-area {
+    inset: auto 10px 10px;
+    padding: 14px;
+  }
+
+  .today-chip {
+    min-width: 72px;
+  }
+}
+
+@media (max-height: 700px) and (orientation: landscape),
+       (max-height: 620px) {
+  .cover-panel {
+    height: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-button,
+  .bottom-nav button {
+    transition: none;
+  }
+}
