@@ -21,10 +21,10 @@ export const incomeCategories = [
 export const methods = ["微信", "支付宝", "银行卡", "现金", "其他"];
 
 export const themes = [
-  { id: "sage", name: "松绿", primary: "#6f927d", accent: "#ee775d" },
-  { id: "coral", name: "珊瑚", primary: "#c96f5d", accent: "#4f8d7b" },
-  { id: "ocean", name: "海蓝", primary: "#5f8fb7", accent: "#e2aa53" },
-  { id: "ink", name: "墨青", primary: "#31453f", accent: "#d88459" }
+  { id: "sage", name: "松绿", primary: "#6f927d", action: "#2f6b55", accent: "#a85d42" },
+  { id: "coral", name: "珊瑚", primary: "#c96f5d", action: "#8f3f32", accent: "#2f6b55" },
+  { id: "ocean", name: "海蓝", primary: "#5f8fb7", action: "#285d8f", accent: "#9a6518" },
+  { id: "ink", name: "墨青", primary: "#31453f", action: "#233b34", accent: "#a85d42" }
 ];
 
 export const coverPresets = [
@@ -49,4 +49,3 @@ export const coverPresets = [
     css: "linear-gradient(135deg, #283a35, #4d7065 54%, #d78a62 120%)"
   }
 ];
-

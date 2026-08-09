@@ -2,6 +2,37 @@ import { useEffect, useRef } from "react";
 
 const NOTIFICATION_SYNC_INTERVAL_MS = 30_000;
 
+export function isNotificationSyncVisible(documentState = {}) {
+  return documentState.hidden !== true && documentState.visibilityState !== "hidden";
+}
+
+export async function syncNotificationBatch({
+  notifyPlugin,
+  isStopped = () => false,
+  isVisible = () => true,
+  getCategories = () => [],
+  getMerchantHistory = () => [],
+  normalizeItems,
+  onEntries
+}) {
+  if (isStopped() || !isVisible()) return [];
+
+  const status = await notifyPlugin.isEnabled();
+  if (isStopped() || !isVisible() || !status?.enabled) return [];
+  if (!status.connected) await notifyPlugin.reconnect();
+  if (isStopped() || !isVisible()) return [];
+
+  const result = await notifyPlugin.drainNotifications();
+  if (isStopped()) return [];
+  const entries = normalizeItems(
+    (result?.items || []).filter((item) => !item?.test),
+    getCategories(),
+    getMerchantHistory()
+  );
+  if (entries.length) onEntries?.(entries, { navigate: false });
+  return entries;
+}
+
 /**
  * Own one notification poller for the lifetime of the app. Mutable parsing
  * inputs live in refs so new records/categories do not recreate the interval.
@@ -29,34 +60,47 @@ export function useNotificationSync({
 
     let stopped = false;
     let syncing = false;
+    let syncAgainWhenVisible = false;
+    const isVisible = () => isNotificationSyncVisible(document);
     const syncNotifications = async () => {
-      if (stopped || syncing) return;
+      if (stopped || !isVisible()) return;
+      if (syncing) {
+        syncAgainWhenVisible = true;
+        return;
+      }
       syncing = true;
+      syncAgainWhenVisible = false;
       try {
-        const status = await notifyPlugin.isEnabled();
-        if (stopped || !status?.enabled) return;
-        if (!status.connected) await notifyPlugin.reconnect();
-        const result = await notifyPlugin.drainNotifications();
-        if (stopped) return;
-        const entries = normalizeItemsRef.current(
-          (result?.items || []).filter((item) => !item?.test),
-          categoriesRef.current,
-          merchantHistoryRef.current
-        );
-        if (entries.length) onEntriesRef.current?.(entries, { navigate: false });
+        await syncNotificationBatch({
+          notifyPlugin,
+          isStopped: () => stopped,
+          isVisible,
+          getCategories: () => categoriesRef.current,
+          getMerchantHistory: () => merchantHistoryRef.current,
+          normalizeItems: (...args) => normalizeItemsRef.current(...args),
+          onEntries: (...args) => onEntriesRef.current?.(...args)
+        });
       } catch {
         // Notification access is optional and must never block bookkeeping.
       } finally {
         syncing = false;
+        if (!stopped && syncAgainWhenVisible && isVisible()) {
+          syncAgainWhenVisible = false;
+          queueMicrotask(syncNotifications);
+        }
       }
     };
 
     const syncWhenVisible = () => {
-      if (document.visibilityState === "visible") syncNotifications();
+      if (!isVisible()) return;
+      syncAgainWhenVisible = true;
+      void syncNotifications();
     };
 
-    syncNotifications();
-    const timer = window.setInterval(syncNotifications, NOTIFICATION_SYNC_INTERVAL_MS);
+    void syncNotifications();
+    const timer = window.setInterval(() => {
+      if (isVisible()) void syncNotifications();
+    }, NOTIFICATION_SYNC_INTERVAL_MS);
     document.addEventListener("visibilitychange", syncWhenVisible);
     return () => {
       stopped = true;
@@ -65,4 +109,3 @@ export function useNotificationSync({
     };
   }, [enabled, notifyPlugin]);
 }
-

@@ -4,21 +4,33 @@ import { ExpenseCategoriesContext, IncomeCategoriesContext } from "../categoryCo
 
 const recordTypeLabels = { expense: "支出", income: "收入" };
 
-export function Field({ label, children }) {
+export function Field({ label, children, hint = "", error = "" }) {
   const labelId = useId();
-  const child = Children.only(children);
-  const labelledChild = isValidElement(child) && typeof child.type === "string"
-    ? cloneElement(child, {
-        "aria-labelledby": child.props["aria-label"] || child.props["aria-labelledby"]
-          ? child.props["aria-labelledby"]
-          : labelId
-      })
-    : child;
+  const descriptionId = useId();
+  let labelled = false;
+  const labelledChildren = Children.map(children, (child) => {
+    const isNativeControl = isValidElement(child)
+      && ["input", "textarea", "select"].includes(child.type);
+    if (!isNativeControl || labelled) return child;
+    labelled = true;
+    return cloneElement(child, {
+      "aria-labelledby": child.props["aria-label"] || child.props["aria-labelledby"]
+        ? child.props["aria-labelledby"]
+        : labelId,
+      "aria-describedby": child.props["aria-describedby"] || (hint || error ? descriptionId : undefined),
+      "aria-invalid": child.props["aria-invalid"] ?? Boolean(error)
+    });
+  });
 
   return (
     <div className="field" role="group" aria-labelledby={labelId}>
-      <span id={labelId}>{label}</span>
-      {labelledChild}
+      <span className="field-label" id={labelId}>{label}</span>
+      {labelledChildren}
+      {(hint || error) && (
+        <small className={error ? "field-message error" : "field-message"} id={descriptionId}>
+          {error || hint}
+        </small>
+      )}
     </div>
   );
 }

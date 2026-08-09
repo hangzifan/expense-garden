@@ -9,7 +9,7 @@ export function AppHeader({ eyebrow, title, action, className = "" }) {
     <header className={`screen-heading app-page-header ${className}`.trim()}>
       <div>
         <p>{eyebrow}</p>
-        <h2>{title}</h2>
+        <h1>{title}</h1>
       </div>
       {action}
     </header>

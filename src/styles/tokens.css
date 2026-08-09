@@ -1,0 +1,196 @@
+/*
+ * Expense Garden — Enterprise Ledger Tokens
+ * ------------------------------------------------------------
+ * Single source of truth for the "静谧账页" visual system.
+ * Runtime theme presets may continue to update --primary/--accent;
+ * structural contrast and action colors remain stable and accessible.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Android / Capacitor geometry */
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --app-max-width: 430px;
+  --nav-height: 76px;
+  --tap-size: 44px;
+  --content-gutter: 20px;
+
+  /* Personalisation compatibility — App.jsx writes these at runtime. */
+  --primary: #2f6b55;
+  --accent: #a85d42;
+  --brand-personal: var(--primary);
+  --brand-companion: var(--accent);
+
+  /* Surfaces */
+  --color-canvas: #f4f6f2;
+  --color-base: #ffffff;
+  --color-raised: #fafbf8;
+  --color-subtle: #edf1ec;
+  --color-selected: #e5efe9;
+  --color-overlay: rgba(12, 24, 18, 0.56);
+  --color-inverse: #17231e;
+  --color-scrim: rgba(8, 18, 13, 0.54);
+
+  /* Text */
+  --text-primary: #10241b;
+  --text-secondary: #526158;
+  --text-tertiary: #68776e;
+  --text-disabled: #929d96;
+  --text-inverse: #ffffff;
+
+  /* Stable action/status colors — independent from decorative themes. */
+  --action-primary: #087b45;
+  --action-primary-hover: #066b3b;
+  --action-primary-pressed: #055c33;
+  --action-on-primary: #ffffff;
+  --status-positive: #137849;
+  --status-warning: #8a5a16;
+  --status-negative: #a33f3f;
+  --status-info: #205fad;
+
+  /* Borders and focus */
+  --border-subtle: #e3e8e3;
+  --border-default: #ccd4ce;
+  --border-strong: #9eaba2;
+  --border-focus: #205fad;
+  --focus-ring: 0 0 0 3px rgba(32, 95, 173, 0.24);
+
+  /* Data visualisation */
+  --data-current: #087b45;
+  --data-previous: #db674d;
+  --data-1: #2f6b55;
+  --data-2: #b56448;
+  --data-3: #3f78a8;
+  --data-4: #8a6c36;
+  --data-5: #725c96;
+  --data-grid: #dce3de;
+
+  /* Typography */
+  --font-ui: MiSans, "HarmonyOS Sans SC", "PingFang SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-numeric: "DIN Alternate", "SF Pro Display", MiSans, "HarmonyOS Sans SC", "PingFang SC", sans-serif;
+  --font-display-size: clamp(2.25rem, 10vw, 3rem);
+  --font-page-title: 2rem;
+  --font-section-title: 1.125rem;
+  --font-body: 0.9375rem;
+  --font-label: 0.8125rem;
+  --font-caption: 0.75rem;
+  --line-display: 1.08;
+  --line-title: 1.22;
+  --line-body: 1.58;
+  --tracking-display: -0.045em;
+  --tracking-label: 0.02em;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+
+  /* Shape */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-round: 999px;
+
+  /* Elevation — intentionally restrained. */
+  --elevation-raised: 0 1px 2px rgba(18, 36, 27, 0.05), 0 8px 24px rgba(18, 36, 27, 0.05);
+  --elevation-floating: 0 16px 42px rgba(18, 36, 27, 0.13);
+  --elevation-overlay: 0 28px 76px rgba(8, 20, 13, 0.25);
+
+  /* Motion */
+  --duration-control: 140ms;
+  --duration-local: 220ms;
+  --duration-screen: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Compatibility aliases for existing inline styles and legacy components. */
+  --bg: var(--color-canvas);
+  --surface: var(--color-base);
+  --surface-raised: var(--color-raised);
+  --surface-soft: var(--color-subtle);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --line: var(--border-subtle);
+  --line-strong: var(--border-default);
+  --success: var(--status-positive);
+  --warning: var(--status-warning);
+  --danger: var(--status-negative);
+  --radius: var(--radius-sm);
+  --shadow: var(--elevation-floating);
+  --shadow-soft: var(--elevation-raised);
+  --shadow-card: var(--elevation-raised);
+}
+
+body[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #101713;
+  --color-base: #17221c;
+  --color-raised: #1d2a23;
+  --color-subtle: #223029;
+  --color-selected: #294235;
+  --color-overlay: rgba(5, 11, 8, 0.7);
+  --color-inverse: #f2f6f3;
+  --color-scrim: rgba(2, 7, 4, 0.72);
+
+  --text-primary: #f2f6f3;
+  --text-secondary: #b8c4bd;
+  --text-tertiary: #96a49b;
+  --text-disabled: #68766e;
+  --text-inverse: #10241b;
+
+  --action-primary: #72b48f;
+  --action-primary-hover: #83c29f;
+  --action-primary-pressed: #62a680;
+  --action-on-primary: #0d2117;
+  --status-positive: #72be94;
+  --status-warning: #e1b96f;
+  --status-negative: #ed9696;
+  --status-info: #8ab8ee;
+
+  --border-subtle: #2b3931;
+  --border-default: #3b4a42;
+  --border-strong: #65746b;
+  --border-focus: #8ab8ee;
+  --focus-ring: 0 0 0 3px rgba(138, 184, 238, 0.28);
+
+  --data-current: #72b48f;
+  --data-previous: #e58c74;
+  --data-1: #72b48f;
+  --data-2: #d39170;
+  --data-3: #78a9d1;
+  --data-4: #c5a76d;
+  --data-5: #aa96d2;
+  --data-grid: #314039;
+
+  --elevation-raised: 0 1px 2px rgba(0, 0, 0, 0.16), 0 10px 28px rgba(0, 0, 0, 0.13);
+  --elevation-floating: 0 18px 48px rgba(0, 0, 0, 0.28);
+  --elevation-overlay: 0 30px 82px rgba(0, 0, 0, 0.46);
+}
+
+@media (max-width: 365px) {
+  :root {
+    --content-gutter: 14px;
+    --font-page-title: 1.75rem;
+    --font-section-title: 1.0625rem;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border-subtle: var(--border-default);
+    --text-secondary: var(--text-primary);
+    --focus-ring: 0 0 0 4px color-mix(in srgb, var(--border-focus) 44%, transparent);
+  }
+}

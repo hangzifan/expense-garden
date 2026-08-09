@@ -4,6 +4,25 @@ import { parseBackupPayload, saveState } from "../storage.js";
 const LOCAL_SAVE_DELAY_MS = 450;
 const NATIVE_BACKUP_DELAY_MS = 4_000;
 
+export function isRestorableNativeBackup(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Array.isArray(value.expenses)
+    && Array.isArray(value.pending)
+    && value.settings
+    && typeof value.settings === "object"
+    && !Array.isArray(value.settings)
+  );
+}
+
+export function shouldFlushNativeBackup(eventType, documentState = {}) {
+  return eventType === "pagehide"
+    || (eventType === "visibilitychange"
+      && (documentState.hidden === true || documentState.visibilityState === "hidden"));
+}
+
 /**
  * Persist the latest ledger snapshot without serializing the whole state on
  * every key stroke. Page/background transitions still flush immediately.
@@ -39,6 +58,9 @@ export function useDebouncedLedgerSave(state, { enabled = true, delay = LOCAL_SA
     };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", flushWhenHidden);
+    if (ready && shouldFlushNativeBackup("visibilitychange", document)) {
+      void flushNativeBackup();
+    }
     return () => {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", flushWhenHidden);
@@ -64,8 +86,26 @@ export function useNativeLedgerBackup({
   const restoreCheckedRef = useRef(false);
   const backupTimerRef = useRef(0);
   const onRestoreRef = useRef(onRestore);
+  const latestStateRef = useRef(state);
+  const enabledRef = useRef(enabled);
+  const readyRef = useRef(ready);
+  const backupPluginRef = useRef(backupPlugin);
 
   onRestoreRef.current = onRestore;
+  latestStateRef.current = state;
+  enabledRef.current = enabled;
+  readyRef.current = ready;
+  backupPluginRef.current = backupPlugin;
+
+  const flushNativeBackup = useCallback(() => {
+    window.clearTimeout(backupTimerRef.current);
+    backupTimerRef.current = 0;
+    if (!enabledRef.current || !readyRef.current) return Promise.resolve(false);
+    return backupPluginRef.current
+      .save({ data: JSON.stringify(latestStateRef.current) })
+      .then(() => true)
+      .catch(() => false);
+  }, []);
 
   useEffect(() => {
     if (!enabled || restoreCheckedRef.current) return;
@@ -79,7 +119,7 @@ export function useNativeLedgerBackup({
       .then((result) => {
         if (!result?.exists || !result?.data) return;
         const restored = parseBackupPayload(result.data);
-        if (!restored || (!restored.expenses.length && !restored.pending.length)) return;
+        if (!isRestorableNativeBackup(restored)) return;
         onRestoreRef.current?.(restored);
       })
       .catch(() => {})
@@ -89,12 +129,27 @@ export function useNativeLedgerBackup({
   useEffect(() => {
     if (!enabled || !ready) return undefined;
     window.clearTimeout(backupTimerRef.current);
-    backupTimerRef.current = window.setTimeout(() => {
-      backupPlugin.save({ data: JSON.stringify(state) }).catch(() => {});
-    }, NATIVE_BACKUP_DELAY_MS);
+    backupTimerRef.current = window.setTimeout(flushNativeBackup, NATIVE_BACKUP_DELAY_MS);
     return () => window.clearTimeout(backupTimerRef.current);
-  }, [enabled, ready, state, backupPlugin]);
+  }, [enabled, ready, state, backupPlugin, flushNativeBackup]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const flushOnPageHide = () => {
+      if (shouldFlushNativeBackup("pagehide", document)) void flushNativeBackup();
+    };
+    const flushWhenHidden = () => {
+      if (shouldFlushNativeBackup("visibilitychange", document)) void flushNativeBackup();
+    };
+
+    window.addEventListener("pagehide", flushOnPageHide);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushOnPageHide);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [enabled, ready, flushNativeBackup]);
 
   return ready;
 }
-

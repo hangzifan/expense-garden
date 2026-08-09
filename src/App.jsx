@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { Activity, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import { categories, coverPresets, incomeCategories, methods, themes } from "./data.js";
 import { hasStoredState, loadState, readFileAsDataUrl } from "./storage.js";
@@ -11,6 +11,7 @@ import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categor
 import { AppHeader, Screen } from "./ui.jsx";
 import { useDebouncedLedgerSave, useNativeLedgerBackup } from "./hooks/useLedgerPersistence.js";
 import { useNotificationSync } from "./hooks/useNotificationSync.js";
+import { useDialogFocus } from "./hooks/useDialogFocus.js";
 import { ExpenseCategoriesContext, IncomeCategoriesContext } from "./categoryContext.js";
 import { CategoryGrid, Field, SegmentedControl, TypeToggle } from "./components/FormControls.jsx";
 import { AddScreen } from "./screens/AddScreen.jsx";
@@ -135,7 +136,12 @@ function App() {
   useDebouncedLedgerSave(appState, { enabled: nativeBackupReady });
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--primary", theme.primary);
+    document.documentElement.style.setProperty("--brand-base", theme.primary);
+    document.documentElement.style.setProperty("--brand-accent", theme.accent);
+    document.documentElement.style.setProperty("--action-primary", theme.action || theme.primary);
+    // Legacy aliases remain during the CSS migration; both now map to
+    // contrast-safe semantic roles instead of one overloaded theme color.
+    document.documentElement.style.setProperty("--primary", theme.action || theme.primary);
     document.documentElement.style.setProperty("--accent", theme.accent);
     document.body.dataset.theme = settings.darkMode ? "dark" : "light";
     if (Capacitor.isNativePlatform()) {
@@ -175,13 +181,20 @@ function App() {
     return { confirmedCount: confirmed.length, pendingCount: pendingEntries.length };
   }
 
+  const handleAddPending = useCallback((entry, options = {}) => addPending(entry, options), []);
+  const handleAddPendingBatch = useCallback((entries, options = {}) => addPendingBatch(entries, options), []);
+  const handleNotificationEntries = useCallback(
+    (entries, options = {}) => ingestNotificationEntries(entries, options),
+    []
+  );
+
   useNotificationSync({
     enabled: canUseNativeNotify,
     notifyPlugin: XzbNotify,
     categories: expenseCategories,
     merchantHistory: expenses,
     normalizeItems: normalizeNotificationItems,
-    onEntries: ingestNotificationEntries
+    onEntries: handleNotificationEntries
   });
 
   function saveExpense(entry) {
@@ -295,13 +308,15 @@ function App() {
             setActiveTab("home");
           }} />
         )}
-        <ScanScreen
-          hidden={activeTab !== "scan"}
-          merchantHistory={expenses}
-          onPending={addPending}
-          onPendingBatch={addPendingBatch}
-          onNotificationEntries={ingestNotificationEntries}
-        />
+        <Activity mode={activeTab === "scan" ? "visible" : "hidden"}>
+          <ScanScreen
+            hidden={activeTab !== "scan"}
+            merchantHistory={expenses}
+            onPending={handleAddPending}
+            onPendingBatch={handleAddPendingBatch}
+            onNotificationEntries={handleNotificationEntries}
+          />
+        </Activity>
         {activeTab === "report" && (
           <ReportScreen
             stats={stats}
@@ -376,8 +391,8 @@ function HomeScreen({
           </button>
         </header>
 
-        <div className="cover-panel" style={coverStyle} aria-label="月度概览">
-          <div className="cover-image-area" />
+        <div className="cover-panel" role="region" aria-label="月度概览">
+          <div className="cover-image-area" style={coverStyle} aria-hidden="true" />
           <div className="cover-data-area">
             <div className="cover-summary-row">
               <div className="cover-stat-main">
@@ -394,7 +409,14 @@ function HomeScreen({
                 <span>预算 {money(stats.budget)}</span>
                 <span>{Math.round(stats.usedRate)}%</span>
               </div>
-              <div className="progress-track">
+              <div
+                className="progress-track"
+                role="progressbar"
+                aria-label="本月预算使用比例"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.min(Math.round(stats.usedRate), 100)}
+              >
                 <div className="progress-fill" style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
               </div>
               <div className="balance-row">
@@ -631,13 +653,16 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
       return;
     }
 
-    const images = await Promise.all(
-      files.map(async (file) => ({
+    const images = [];
+    // Read fallback files sequentially so a desktop/web batch never holds
+    // twelve full file-reader buffers at the same time.
+    for (const file of files) {
+      images.push({
         dataUrl: await readFileAsDataUrl(file),
         uri: "",
         name: file.name
-      }))
-    );
+      });
+    }
 
     setOcrCrop(defaultOcrCrop);
     applySelectedImages(images);
@@ -650,11 +675,15 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
       try {
         const detector = new window.TextDetector();
         const bitmap = await createImageBitmap(files[0]);
-        const detections = await detector.detect(bitmap);
-        const text = detections.map((item) => item.rawValue).join("\n");
-        setRawText(text);
-        setStatus(text ? "已读取文字" : "等待文字");
-        if (!text) setImageNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
+        try {
+          const detections = await detector.detect(bitmap);
+          const text = detections.map((item) => item.rawValue).join("\n");
+          setRawText(text);
+          setStatus(text ? "已读取文字" : "等待文字");
+          if (!text) setImageNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
+        } finally {
+          bitmap.close?.();
+        }
       } catch {
         setStatus("等待文字");
         setImageNotice("没有读取到文字，请把账单文字粘贴到文本框后再识别。");
@@ -941,7 +970,51 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
     <Screen className="scan-screen" hidden={hidden}>
       <AppHeader eyebrow="导入截图" title="识别后确认" />
 
-      <section className="notification-sync-card">
+      <div className="import-panel">
+        <button className="primary-button full" type="button" onClick={pickImageWithNativeOcr}>
+          <ScanIcon />
+          批量选择截图
+        </button>
+        <label className="upload-box">
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => {
+              handleImages(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
+          <span>{status}</span>
+        </label>
+        {imageBatch.length > 0 && (
+          <BatchImageQueue images={imageBatch} activeId={activeBatchImage?.id} onSelect={selectBatchImage} />
+        )}
+        {selectedImageDataUrl && (
+          <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={updateActiveImageCrop} />
+        )}
+        <textarea
+          value={rawText}
+          onChange={(event) => setRawText(event.target.value)}
+          placeholder="粘贴截图中的账单文字，例如：支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32"
+        />
+        <div className="sample-row">
+          <button type="button" onClick={() => setRawText("支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32")}>截图样例</button>
+        </div>
+        <button className="primary-button full" type="button" onClick={recognizeScreenshot}>
+          <ScanIcon />
+          {selectedImageDataUrl ? "识别裁剪区域" : "开始识别"}
+        </button>
+        {imageBatch.length > 0 && imageBatch.some((image) => image.dataUrl) && (
+          <button className="secondary-button full" type="button" onClick={recognizeBatchScreenshots} disabled={isBatchRecognizing}>
+            {isBatchRecognizing ? "批量识别中..." : `批量识别 ${imageBatch.length} 张`}
+          </button>
+        )}
+        {imageNotice && <p className="scan-feedback" role="status">{imageNotice}</p>}
+      </div>
+
+      <section className="notification-sync-card" aria-live="polite">
         <div className="notification-card-heading">
           <div>
             <span>通知自动记账</span>
@@ -1003,52 +1076,8 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
             打开后台与电池设置
           </button>
         )}
-        {notificationNotice && <p className="scan-feedback">{notificationNotice}</p>}
+        {notificationNotice && <p className="scan-feedback" role="status">{notificationNotice}</p>}
       </section>
-
-      <div className="import-panel">
-        <button className="primary-button full" type="button" onClick={pickImageWithNativeOcr}>
-          <ScanIcon />
-          批量选择截图
-        </button>
-        <label className="upload-box">
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(event) => {
-              handleImages(event.target.files);
-              event.target.value = "";
-            }}
-          />
-          {preview ? <img src={preview} alt="支付截图预览" /> : <UploadIcon />}
-          <span>{status}</span>
-        </label>
-        {imageBatch.length > 0 && (
-          <BatchImageQueue images={imageBatch} activeId={activeBatchImage?.id} onSelect={selectBatchImage} />
-        )}
-        {selectedImageDataUrl && (
-          <ScreenshotCropPanel crop={ocrCrop} image={selectedImageDataUrl} onCropChange={updateActiveImageCrop} />
-        )}
-        <textarea
-          value={rawText}
-          onChange={(event) => setRawText(event.target.value)}
-          placeholder="粘贴截图中的账单文字，例如：支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32"
-        />
-        <div className="sample-row">
-          <button type="button" onClick={() => setRawText("支付宝 支付成功 金额：128.00 商户：盒马鲜生 2026-07-01 19:32")}>截图样例</button>
-        </div>
-        <button className="primary-button full" type="button" onClick={recognizeScreenshot}>
-          <ScanIcon />
-          {selectedImageDataUrl ? "识别裁剪区域" : "开始识别"}
-        </button>
-        {imageBatch.length > 0 && imageBatch.some((image) => image.dataUrl) && (
-          <button className="secondary-button full" type="button" onClick={recognizeBatchScreenshots} disabled={isBatchRecognizing}>
-            {isBatchRecognizing ? "批量识别中..." : `批量识别 ${imageBatch.length} 张`}
-          </button>
-        )}
-        {imageNotice && <p className="scan-feedback">{imageNotice}</p>}
-      </div>
 
       {candidate?.source === "截图识别" && (
         <CandidateEditor
@@ -1344,7 +1373,7 @@ function CandidateEditor({ candidate, setCandidate, onSave, onCancel }) {
         <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
         <button className="primary-button" type="button" onClick={onSave}>
           <CheckIcon />
-          确认入账
+          加入待确认
         </button>
       </div>
     </section>
@@ -1393,11 +1422,15 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
   const dragRef = useRef(null);
   const cropRef = useRef(normalizeOcrCrop(crop));
   const [imageRatio, setImageRatio] = useState(9 / 16);
-  const safeCrop = normalizeOcrCrop(crop);
+  const [draftCrop, setDraftCrop] = useState(() => normalizeOcrCrop(crop));
+  const safeCrop = normalizeOcrCrop(draftCrop);
 
   useEffect(() => {
-    cropRef.current = safeCrop;
-  }, [safeCrop.x, safeCrop.y, safeCrop.width, safeCrop.height]);
+    if (dragRef.current) return;
+    const next = normalizeOcrCrop(crop);
+    cropRef.current = next;
+    setDraftCrop(next);
+  }, [image, crop?.x, crop?.y, crop?.width, crop?.height]);
 
   function startDrag(event, mode) {
     const stage = stageRef.current;
@@ -1423,12 +1456,20 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
     const deltaY = ((event.clientY - drag.startY) / bounds.height) * 100;
     const next = resizeOcrCrop(drag.crop, drag.mode, deltaX, deltaY);
     cropRef.current = next;
-    onCropChange(next);
+    setDraftCrop(next);
   }
 
   function endDrag(event) {
     if (!dragRef.current || event.pointerId !== dragRef.current.pointerId) return;
     dragRef.current = null;
+    onCropChange(cropRef.current);
+  }
+
+  function resetCrop() {
+    const next = normalizeOcrCrop(defaultOcrCrop);
+    cropRef.current = next;
+    setDraftCrop(next);
+    onCropChange(next);
   }
 
   return (
@@ -1473,7 +1514,7 @@ function ScreenshotCropPanel({ crop, image, onCropChange }) {
           ))}
         </div>
       </div>
-      <button className="secondary-button small crop-reset" type="button" onClick={() => onCropChange(defaultOcrCrop)}>重置裁剪</button>
+      <button className="secondary-button small crop-reset" type="button" onClick={resetCrop}>重置裁剪</button>
     </section>
   );
 }
@@ -1780,18 +1821,21 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
   const expenseCategories = useContext(ExpenseCategoriesContext);
   const incomeCategoryList = useContext(IncomeCategoriesContext);
   const visibleCategoryIcons = useMemo(() => searchCategoryIcons(iconSearch, iconGroup), [iconSearch, iconGroup]);
+  const categoryEditorDialogRef = useDialogFocus({
+    isOpen: Boolean(categoryEditor),
+    onClose: () => setCategoryEditor(null)
+  });
+  const categoryDeleteDialogRef = useDialogFocus({
+    isOpen: Boolean(categoryDeleteTarget),
+    onClose: () => setCategoryDeleteTarget(null)
+  });
 
   useEffect(() => {
     if (!categoryEditor) return undefined;
     const previousOverflow = document.body.style.overflow;
-    const closeOnEscape = (event) => {
-      if (event.key === "Escape") setCategoryEditor(null);
-    };
     document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", closeOnEscape);
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
     };
   }, [Boolean(categoryEditor)]);
 
@@ -2083,8 +2127,10 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
           {categoryEditor && (
             <div
               className="category-editor-backdrop"
+              ref={categoryEditorDialogRef}
               role="dialog"
               aria-modal="true"
+              tabIndex={-1}
               aria-label={categoryEditor.isNew
                 ? `添加${categoryEditor.type === "income" ? "收入" : "消费"}分类`
                 : `编辑${categoryEditor.name}`}
@@ -2276,7 +2322,14 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
       )}
 
       {categoryDeleteTarget && (
-        <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认删除分类">
+        <div
+          className="confirm-backdrop"
+          ref={categoryDeleteDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="确认删除分类"
+          tabIndex={-1}
+        >
           <section className="confirm-modal">
             <div>
               <span>删除分类</span>
@@ -2295,12 +2348,20 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
 }
 
 function CoverCropModal({ crop, draft, onApply, onCancel, onCropChange }) {
+  const dialogRef = useDialogFocus({ onClose: onCancel });
   const updateCrop = (key, value) => {
     onCropChange({ ...crop, [key]: Number(value) });
   };
 
   return (
-    <div className="crop-backdrop" role="dialog" aria-modal="true" aria-label="封面裁剪">
+    <div
+      className="crop-backdrop"
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="封面裁剪"
+      tabIndex={-1}
+    >
       <section className="crop-modal">
         <div className="crop-header">
           <div>
@@ -2389,7 +2450,7 @@ function PendingCard({ item, onConfirm, onDelete }) {
       </div>
       <CategoryGrid compact type={local.type} value={local.category} onChange={(category) => setLocal({ ...local, category })} />
       <div className="pending-actions">
-        <button type="button" className="ghost-button" onClick={() => onDelete(item)}>
+        <button type="button" className="ghost-button" aria-label={`删除待确认记录 ${local.merchant}`} onClick={() => onDelete(item)}>
           <TrashIcon />
         </button>
         <button type="button" className="primary-button small" onClick={() => onConfirm(local)}>
@@ -2544,8 +2605,17 @@ function BottomNav({ activeTab, onTab }) {
 }
 
 function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
+  const dialogRef = useDialogFocus({ onClose: onCancel });
+
   return (
-    <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认删除">
+    <div
+      className="confirm-backdrop"
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="确认删除"
+      tabIndex={-1}
+    >
       <section className="confirm-modal">
         <div>
           <span>删除记录</span>
@@ -2623,7 +2693,7 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
   const previousPoints = buildPoints(previousDays);
 
   return (
-    <svg className="trend-chart" viewBox="0 0 280 128" role="img" aria-label="本月与上月消费趋势">
+    <svg className="trend-chart" viewBox="0 0 280 128" role="group" aria-label="本月与上月消费趋势，使用左右方向键选择日期">
       <path d="M14 106H266" />
       <path d="M14 28H266" className="grid-line" />
       {previousPoints && <polyline points={previousPoints} className="previous-line" />}
@@ -2638,11 +2708,27 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
             className={selected ? "trend-day selected" : "trend-day"}
             key={day.date}
             role="button"
-            tabIndex="0"
+            tabIndex={selected ? 0 : -1}
             aria-label={`${formatDailyLabel(day.date)}，支出 ${money(day.total)}`}
+            aria-pressed={selected}
             onClick={() => onDaySelect?.(day.date)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") onDaySelect?.(day.date);
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onDaySelect?.(day.date);
+                return;
+              }
+              const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+              if (!direction && event.key !== "Home" && event.key !== "End") return;
+              event.preventDefault();
+              const nextIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? days.length - 1
+                  : clamp(index + direction, 0, days.length - 1);
+              onDaySelect?.(days[nextIndex]?.date);
+              const controls = event.currentTarget.parentElement?.querySelectorAll(".trend-day");
+              window.requestAnimationFrame(() => controls?.[nextIndex]?.focus());
             }}
           >
             <circle className="trend-hit-area" cx={x} cy={y} r="8" />
