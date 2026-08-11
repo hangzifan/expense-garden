@@ -2,8 +2,8 @@ apply plugin: 'com.android.application'
 
 // Keep normal builds on the app's current version while allowing a dedicated
 // rollback APK to carry a higher versionCode than the release it replaces.
-def xzbVersionCode = (project.findProperty('xzbVersionCode') ?: '34').toString().toInteger()
-def xzbVersionName = (project.findProperty('xzbVersionName') ?: '1.31').toString()
+def xzbVersionCode = (project.findProperty('xzbVersionCode') ?: '35').toString().toInteger()
+def xzbVersionName = (project.findProperty('xzbVersionName') ?: '1.32').toString()
 
 android {
     namespace = "com.xiaozhangben.app"

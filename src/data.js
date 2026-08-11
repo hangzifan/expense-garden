@@ -30,8 +30,8 @@ export const themes = [
 export const coverPresets = [
   {
     id: "morning",
-    name: "晨光",
-    css: "linear-gradient(135deg, rgba(255,244,218,.95), rgba(229,242,232,.92) 45%, rgba(244,178,128,.88))"
+    name: "猫娘晨记",
+    css: "#f8f1f6 url('/assets/neko-ledger-hero-v1.png') center center / cover no-repeat"
   },
   {
     id: "leaf",

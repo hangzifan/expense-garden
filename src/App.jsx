@@ -6,7 +6,7 @@ import { parseExpenseText } from "./parser.js";
 import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
 import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
 import { createId } from "./ids.js";
-import { Search } from "lucide-react";
+import { PawPrint, Sparkles } from "lucide-react";
 import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
 import { AppHeader, Screen } from "./ui.jsx";
 import { useDebouncedLedgerSave, useNativeLedgerBackup } from "./hooks/useLedgerPersistence.js";
@@ -284,7 +284,7 @@ function App() {
     <ExpenseCategoriesContext.Provider value={expenseCategories}>
     <IncomeCategoriesContext.Provider value={incomeCategoryList}>
     <div className="app-shell">
-      <main className="phone-frame">
+      <main className="phone-frame" data-active-tab={activeTab}>
         {activeTab === "home" && (
           <HomeScreen
             stats={stats}
@@ -377,37 +377,47 @@ function HomeScreen({
   const latest = expenses.slice(0, 6);
   const coverStyle = getCoverStyle(settings);
   const isCurrentMonth = selectedMonth === currentMonth;
+  const formattedTotal = money(stats.total);
+  const amountLengthClass = formattedTotal.length >= 13 ? "is-xlong" : formattedTotal.length >= 10 ? "is-long" : "";
+  const companionLine = pending.length
+    ? `${pending.length} 条账单等猫娘陪你确认`
+    : stats.balance < 0
+      ? "猫娘发现本月支出高于收入，去看看明细"
+      : "猫娘已把今天的账目整理好";
 
   return (
-    <Screen className="home-screen">
+    <Screen className="home-screen neko-home">
       <section className="home-hero">
-        <header className="topbar">
+        <header className="topbar neko-topbar">
           <div>
             <p className="date-line">{formatReadableDate(today())}</p>
-            <h1>小账本</h1>
+            <div className="neko-title-line">
+              <h1>小账本</h1>
+              <span className="neko-mark" aria-hidden="true"><PawPrint /></span>
+            </div>
+            <p className="neko-companion-line">{companionLine}</p>
           </div>
           <button className="icon-button" type="button" aria-label="自定义封面" onClick={() => onTab("profile")}>
             <UserIcon />
           </button>
         </header>
 
-        <div className="cover-panel" role="region" aria-label="月度概览">
-          <div className="cover-image-area" style={coverStyle} aria-hidden="true" />
-          <div className="cover-data-area">
-            <div className="cover-summary-row">
-              <div className="cover-stat-main">
-                <span>{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
-                <strong>{money(stats.total)}</strong>
-              </div>
-              <div className="today-chip">
-                <span>{isCurrentMonth ? "今日" : "日均"}</span>
-                <b>{money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}</b>
-              </div>
+        <div className="cover-panel neko-cover-panel" role="region" aria-label="月度概览">
+          <div className="cover-image-area" style={coverStyle}>
+            <div className="neko-hero-copy">
+              <span className="neko-kicker"><Sparkles aria-hidden="true" />猫娘小金库</span>
+              <span className="neko-metric-label">{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
+              <strong className={amountLengthClass}>{formattedTotal}</strong>
+              <span className="neko-daily-total">
+                {isCurrentMonth ? "今日" : "日均"} {money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}
+              </span>
             </div>
+          </div>
+          <div className="cover-data-area">
             <div className="budget-block">
               <div className="budget-row">
-                <span>预算 {money(stats.budget)}</span>
-                <span>{Math.round(stats.usedRate)}%</span>
+                <span>预算进度 · {money(stats.budget)}</span>
+                <strong>{Math.round(stats.usedRate)}%</strong>
               </div>
               <div
                 className="progress-track"
@@ -420,9 +430,9 @@ function HomeScreen({
                 <div className="progress-fill" style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
               </div>
               <div className="balance-row">
-                <span>收入 {money(stats.incomeTotal)}</span>
+                <span><small>收入</small><b>{money(stats.incomeTotal)}</b></span>
                 <span className={stats.balance < 0 ? "negative" : "positive"}>
-                  结余 {money(stats.balance)}
+                  <small>结余</small><b>{money(stats.balance)}</b>
                 </span>
               </div>
             </div>
@@ -433,13 +443,13 @@ function HomeScreen({
 
       <section className="home-below-fold">
         <div className="quick-grid">
-          <ActionButton icon={PlusIcon} label="记一笔" onClick={() => onTab("add")} />
-          <ActionButton icon={UploadIcon} label="导入截图" onClick={() => onTab("scan")} />
+          <ActionButton variant="primary" icon={PlusIcon} label="记一笔" onClick={() => onTab("add")} />
+          <ActionButton variant="secondary" icon={UploadIcon} label="识别账单" onClick={() => onTab("scan")} />
         </div>
 
         <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
 
-        <SectionTitle title="待确认" aside={`${pending.length} 条`} />
+        <SectionTitle title="待确认" aside={`${pending.length} 条`} headingLevel={2} />
         <div className="stack">
           {pending.length === 0 && <EmptyLine text="没有待确认账单" />}
           {pending.map((item) => (
@@ -447,7 +457,7 @@ function HomeScreen({
           ))}
         </div>
 
-        <SectionTitle title="最近记录" aside={formatMonthLabel(selectedMonth)} />
+        <SectionTitle title="最近记录" aside={formatMonthLabel(selectedMonth)} headingLevel={2} />
         <ExpenseList items={latest} onEdit={onEdit} onDelete={onDelete} />
       </section>
     </Screen>
@@ -2055,6 +2065,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
               style={{ background: preset.css }}
               onClick={() => setSettings({ ...settings, coverPresetId: preset.id, coverImage: "" })}
               aria-label={preset.name}
+              aria-pressed={settings.coverPresetId === preset.id && !settings.coverImage}
             />
           ))}
         </div>
@@ -2482,10 +2493,10 @@ function ExpenseList({ items, onEdit, onDelete }) {
               {item.note && <em className="expense-note">{item.note}</em>}
             </div>
             <b>{signedMoney(item.amount, item.type)}</b>
-            <button type="button" className="row-icon" aria-label="编辑" onClick={() => onEdit(item)}>
+            <button type="button" className="row-icon" aria-label={`编辑记录 ${item.merchant}`} onClick={() => onEdit(item)}>
               <EditIcon />
             </button>
-            <button type="button" className="row-icon" aria-label="删除" onClick={() => onDelete(item)}>
+            <button type="button" className="row-icon" aria-label={`删除记录 ${item.merchant}`} onClick={() => onDelete(item)}>
               <TrashIcon />
             </button>
           </article>
@@ -2631,18 +2642,19 @@ function ConfirmDeleteModal({ item, onCancel, onConfirm }) {
   );
 }
 
-function SectionTitle({ title, aside }) {
+function SectionTitle({ title, aside, headingLevel = 3 }) {
+  const Heading = headingLevel === 2 ? "h2" : "h3";
   return (
     <div className="section-title">
-      <h3>{title}</h3>
+      <Heading>{title}</Heading>
       <span>{aside}</span>
     </div>
   );
 }
 
-function ActionButton({ icon: Icon, label, onClick }) {
+function ActionButton({ icon: Icon, label, onClick, variant = "secondary" }) {
   return (
-    <button type="button" className="action-button" onClick={onClick}>
+    <button type="button" className={`action-button ${variant}`} onClick={onClick}>
       <Icon />
       <span>{label}</span>
     </button>
