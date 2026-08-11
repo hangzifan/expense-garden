@@ -3244,6 +3244,770 @@ button[aria-disabled="true"] {
   background: color-mix(in srgb, var(--cat-surface) 95%, transparent);
 }
 
+/* ============================================================
+   4b. Home v1.33 — adult catgirl hero with Q-style companion accents
+   ============================================================ */
+
+.home-screen.chibi-home {
+  padding: 16px 16px 40px;
+  background:
+    radial-gradient(circle at 94% 3%, color-mix(in srgb, var(--cat-rose) 15%, transparent), transparent 24%),
+    radial-gradient(circle at 7% 34%, color-mix(in srgb, var(--cat-lilac) 10%, transparent), transparent 22%),
+    var(--cat-canvas);
+  color: var(--cat-ink);
+}
+
+.chibi-topbar {
+  min-height: 88px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.chibi-topbar .date-line {
+  margin-bottom: 2px;
+  color: var(--cat-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.035em;
+}
+
+.chibi-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chibi-title-line h1 {
+  color: var(--cat-ink);
+  font-size: clamp(2rem, 9.3vw, 2.42rem);
+  font-weight: 800;
+  letter-spacing: -0.065em;
+}
+
+.chibi-brand-paw {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cat-rose) 30%, var(--cat-border));
+  border-radius: 11px 11px 14px 14px;
+  background: color-mix(in srgb, var(--cat-rose) 12%, var(--cat-surface));
+  color: var(--cat-rose);
+  transform: rotate(6deg);
+}
+
+.chibi-brand-paw svg {
+  width: 18px;
+  height: 18px;
+  fill: color-mix(in srgb, currentColor 16%, transparent);
+  stroke-width: 1.8;
+}
+
+.chibi-companion-line {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  color: var(--cat-muted);
+  font-size: 0.78rem;
+  font-weight: 520;
+}
+
+.chibi-companion-line p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chibi-companion-avatar {
+  position: relative;
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cat-lilac) 42%, var(--cat-border));
+  border-radius: 10px 10px 12px 12px;
+  background: color-mix(in srgb, var(--cat-lilac) 10%, var(--cat-surface));
+  box-shadow: 0 4px 10px rgba(74, 53, 109, 0.1);
+  transform: rotate(-3deg);
+}
+
+.chibi-companion-avatar img {
+  width: 42px;
+  max-width: none;
+  transform: translateY(4px);
+}
+
+.chibi-profile-button {
+  position: relative;
+  border-color: var(--cat-border);
+  border-radius: 16px 16px 18px 18px;
+  background: var(--cat-surface);
+  color: var(--cat-plum);
+  box-shadow: 0 10px 24px rgba(91, 61, 126, 0.1);
+}
+
+.chibi-profile-button > span {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--cat-surface);
+  border-radius: 50%;
+  background: var(--cat-rose);
+}
+
+.chibi-ledger {
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
+  border: 2px solid color-mix(in srgb, var(--cat-lilac) 64%, var(--cat-border));
+  border-radius: 27px 27px 24px 24px;
+  background: var(--cat-surface);
+  box-shadow: var(--cat-shadow);
+  isolation: isolate;
+}
+
+.chibi-cover-texture {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: -2;
+  height: 190px;
+  opacity: 1;
+  background-position: center center !important;
+  background-size: auto 190px !important;
+  background-repeat: no-repeat !important;
+  background-color: var(--cat-surface) !important;
+  filter: none;
+}
+
+.chibi-ledger-main {
+  position: relative;
+  min-height: 190px;
+  overflow: hidden;
+  padding: 20px 18px 10px;
+}
+
+.chibi-ledger-main::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--cat-surface) 98%, transparent) 0%,
+    color-mix(in srgb, var(--cat-surface) 88%, transparent) 42%,
+    color-mix(in srgb, var(--cat-surface) 18%, transparent) 66%,
+    transparent 80%
+  );
+  pointer-events: none;
+}
+
+.chibi-total-block {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  width: 58%;
+  align-content: start;
+}
+
+.chibi-period {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 15px;
+  color: var(--cat-plum);
+  font-family: var(--font-numeric);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
+.chibi-period svg {
+  width: 16px;
+  height: 16px;
+  color: var(--cat-lilac-strong);
+}
+
+.chibi-total-label {
+  color: var(--cat-muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.chibi-total-block > strong {
+  margin: 3px 0 7px;
+  color: var(--cat-ink);
+  font-family: var(--font-numeric);
+  font-size: clamp(2.05rem, 9.7vw, 2.78rem);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 820;
+  letter-spacing: -0.055em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.chibi-total-block > strong.is-long {
+  font-size: clamp(1.62rem, 7.4vw, 2.1rem);
+}
+
+.chibi-total-block > strong.is-xlong {
+  font-size: clamp(1.3rem, 6vw, 1.72rem);
+  letter-spacing: -0.025em;
+}
+
+.chibi-daily-line {
+  color: var(--cat-mint);
+  font-family: var(--font-numeric);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+}
+
+.chibi-sparkle {
+  position: absolute;
+  z-index: 3;
+  color: var(--cat-lilac);
+  pointer-events: none;
+}
+
+.chibi-sparkle.one {
+  top: 26px;
+  right: 9px;
+  width: 19px;
+}
+
+.chibi-sparkle.two {
+  right: 160px;
+  bottom: 21px;
+  width: 18px;
+  color: var(--cat-rose);
+  transform: rotate(-13deg);
+}
+
+.chibi-stat-grid {
+  position: relative;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 11px 11px;
+  padding: 11px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--cat-border) 86%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--cat-surface) 94%, transparent);
+  box-shadow: 0 8px 22px rgba(82, 54, 105, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.chibi-stat {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  text-align: center;
+}
+
+.chibi-stat + .chibi-stat {
+  border-left: 1px dashed var(--cat-border);
+}
+
+.chibi-sticker-icon,
+.chibi-shortcut-icon,
+.chibi-section-icon,
+.chibi-empty-cat {
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 10%, var(--cat-surface));
+}
+
+.chibi-sticker-icon {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 1px;
+  border-radius: 13px 13px 15px 15px;
+  box-shadow: 0 5px 12px color-mix(in srgb, currentColor 12%, transparent);
+  transform: rotate(-3deg);
+}
+
+.chibi-sticker-icon svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.9;
+}
+
+.chibi-stat.violet { color: var(--cat-lilac-strong); }
+.chibi-stat.mint { color: var(--cat-mint); }
+.chibi-stat.coral { color: var(--cat-rose); }
+.chibi-stat.gold { color: var(--cat-gold); }
+
+.chibi-stat small {
+  color: var(--cat-muted);
+  font-size: 0.7rem;
+  font-weight: 620;
+}
+
+.chibi-stat > strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--cat-ink);
+  font-family: var(--font-numeric);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chibi-stat > strong.positive { color: var(--cat-mint); }
+.chibi-stat > strong.negative { color: var(--cat-rose); }
+
+.chibi-paw-progress {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--cat-muted);
+}
+
+.chibi-paw-progress > span {
+  display: flex;
+  gap: 1px;
+}
+
+.chibi-paw-progress svg {
+  width: 9px;
+  height: 9px;
+  color: color-mix(in srgb, var(--cat-lilac) 24%, var(--cat-border));
+  fill: currentColor;
+  stroke: none;
+}
+
+.chibi-paw-progress svg.active {
+  color: var(--cat-lilac-strong);
+}
+
+.chibi-paw-progress b {
+  font-family: var(--font-numeric);
+  font-size: 0.64rem;
+}
+
+.chibi-home-content {
+  padding-top: 12px;
+}
+
+.chibi-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chibi-action {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 72px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 20px;
+  text-align: left;
+  box-shadow: 0 11px 24px rgba(82, 54, 105, 0.12);
+  transition: transform var(--duration-control) var(--ease-standard), box-shadow var(--duration-control) var(--ease-standard);
+}
+
+.chibi-action::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1px dashed color-mix(in srgb, #ffffff 54%, transparent);
+  border-radius: 16px;
+  pointer-events: none;
+}
+
+.chibi-action.primary {
+  background: linear-gradient(135deg, #8f6bc2, #7650a6);
+  color: #ffffff;
+}
+
+.chibi-action.scan {
+  background: linear-gradient(135deg, #8bd2c2, #61b39f);
+  color: #173f37;
+}
+
+.chibi-action:active {
+  transform: translateY(1px) scale(0.985);
+  box-shadow: 0 6px 14px rgba(82, 54, 105, 0.1);
+}
+
+.chibi-action-icon {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, #ffffff 24%, transparent);
+}
+
+.chibi-action-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2;
+}
+
+.chibi-action > span:nth-child(2) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.chibi-action strong {
+  font-size: 0.92rem;
+  font-weight: 770;
+}
+
+.chibi-action small {
+  color: inherit;
+  font-size: 0.66rem;
+  opacity: 0.78;
+}
+
+.chibi-action-paw {
+  position: absolute;
+  right: -4px;
+  bottom: -5px;
+  width: 35px;
+  height: 35px;
+  opacity: 0.18;
+  transform: rotate(-14deg);
+}
+
+.chibi-shortcut-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 10px;
+  padding: 9px 7px 8px;
+  border: 1px solid var(--cat-border);
+  border-radius: 20px;
+  background: var(--cat-surface);
+  box-shadow: 0 9px 24px rgba(82, 54, 105, 0.07);
+}
+
+.chibi-shortcut-rail button {
+  display: grid;
+  min-width: 0;
+  min-height: 62px;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--cat-muted);
+}
+
+.chibi-shortcut-rail button + button {
+  border-left: 1px dashed var(--cat-border);
+  border-radius: 0 13px 13px 0;
+}
+
+.chibi-shortcut-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 13px;
+}
+
+.chibi-shortcut-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.9;
+}
+
+.chibi-shortcut-icon.rose { color: var(--cat-rose); }
+.chibi-shortcut-icon.gold { color: var(--cat-gold); }
+.chibi-shortcut-icon.mint { color: var(--cat-mint); }
+.chibi-shortcut-icon.violet { color: var(--cat-lilac-strong); }
+
+.chibi-shortcut-rail button > span:last-child {
+  color: var(--cat-plum);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.chibi-home .month-picker {
+  gap: 4px;
+  margin: 10px 0 2px;
+  padding: 4px 7px;
+  border: 1px dashed color-mix(in srgb, var(--cat-lilac) 64%, var(--cat-border));
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--cat-surface-soft) 72%, var(--cat-surface));
+}
+
+.chibi-home .month-picker button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--cat-lilac-strong);
+}
+
+.chibi-home .month-picker label span {
+  color: var(--cat-muted);
+  font-size: 0.7rem;
+}
+
+.chibi-home .month-picker input {
+  color: var(--cat-ink);
+  font-size: 0.95rem;
+}
+
+.chibi-section-heading {
+  display: grid;
+  grid-template-columns: 34px auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 0 1px 9px;
+  border-bottom: 1px dashed var(--cat-border);
+}
+
+.chibi-section-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  color: var(--cat-lilac-strong);
+}
+
+.chibi-section-heading.recent .chibi-section-icon {
+  color: var(--cat-mint);
+}
+
+.chibi-section-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.chibi-section-heading h2 {
+  color: var(--cat-ink);
+  font-size: 1.08rem;
+  font-weight: 780;
+}
+
+.chibi-section-heading > span:last-child {
+  justify-self: end;
+  color: var(--cat-muted);
+  font-size: 0.72rem;
+}
+
+.chibi-empty-state {
+  position: relative;
+  display: grid;
+  min-height: 82px;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 11px 14px;
+  overflow: hidden;
+  border: 1px solid var(--cat-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--cat-surface-soft) 42%, var(--cat-surface));
+}
+
+.chibi-empty-cat {
+  width: 60px;
+  height: 60px;
+  overflow: hidden;
+  border-radius: 18px 18px 21px 21px;
+  color: var(--cat-lilac-strong);
+  transform: rotate(-4deg);
+}
+
+.chibi-empty-cat img {
+  width: auto;
+  height: 76px;
+  max-width: none;
+  transform: translateY(4px);
+  filter: drop-shadow(0 4px 7px rgba(74, 53, 109, 0.16));
+}
+
+.chibi-empty-state > div {
+  display: grid;
+  gap: 2px;
+}
+
+.chibi-empty-state strong {
+  color: var(--cat-plum);
+  font-size: 0.82rem;
+}
+
+.chibi-empty-state p {
+  color: var(--cat-muted);
+  font-size: 0.72rem;
+}
+
+.chibi-empty-paw {
+  position: absolute;
+  right: 10px;
+  bottom: -3px;
+  width: 31px;
+  color: color-mix(in srgb, var(--cat-rose) 26%, transparent);
+  transform: rotate(-16deg);
+}
+
+.chibi-home .pending-card {
+  margin-top: 9px;
+  border-color: var(--cat-border);
+  border-radius: 18px;
+  background: var(--cat-surface);
+  box-shadow: 0 8px 22px rgba(82, 54, 105, 0.07);
+}
+
+.chibi-home .expense-list {
+  border-top: 0;
+}
+
+.chibi-home .expense-row {
+  border-bottom: 1px dashed var(--cat-border);
+}
+
+.chibi-home .expense-category-icon {
+  border-radius: 13px;
+  background: color-mix(in srgb, currentColor 10%, var(--cat-surface));
+}
+
+.phone-frame[data-active-tab="home"] .bottom-nav {
+  border-top-color: var(--cat-border);
+  background: color-mix(in srgb, var(--cat-surface) 96%, transparent);
+}
+
+.phone-frame[data-active-tab="home"] .bottom-nav button {
+  color: var(--cat-muted);
+}
+
+.phone-frame[data-active-tab="home"] .bottom-nav button > svg {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-radius: 10px;
+  transition: background var(--duration-control) var(--ease-standard), transform var(--duration-control) var(--ease-standard);
+}
+
+.phone-frame[data-active-tab="home"] .bottom-nav button.active > svg {
+  background: color-mix(in srgb, var(--cat-lilac) 16%, var(--cat-surface));
+  color: var(--cat-lilac-strong);
+  transform: translateY(-2px) rotate(-2deg);
+}
+
+.phone-frame[data-active-tab="home"] .bottom-nav button.active::after {
+  right: calc(50% - 3px);
+  bottom: 3px;
+  left: auto;
+  width: 6px;
+  height: 6px;
+  background: var(--cat-rose);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chibi-action:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(82, 54, 105, 0.16);
+  }
+
+  .chibi-shortcut-rail button:hover {
+    background: var(--cat-surface-soft);
+  }
+}
+
+@media (max-width: 340px) {
+  .home-screen.chibi-home {
+    padding-inline: 12px;
+  }
+
+  .chibi-topbar {
+    min-height: 82px;
+  }
+
+  .chibi-ledger-main {
+    min-height: 174px;
+    padding-inline: 14px;
+  }
+
+  .chibi-total-block {
+    width: 60%;
+  }
+
+  .chibi-period {
+    margin-bottom: 11px;
+    font-size: 0.68rem;
+  }
+
+  .chibi-total-block > strong {
+    font-size: clamp(1.8rem, 10vw, 2.08rem);
+  }
+
+  .chibi-sparkle.two {
+    right: 132px;
+  }
+
+  .chibi-stat-grid {
+    margin-inline: 8px;
+  }
+
+  .chibi-stat {
+    padding-inline: 3px;
+  }
+
+  .chibi-sticker-icon {
+    width: 31px;
+    height: 31px;
+  }
+
+  .chibi-stat > strong {
+    font-size: 0.73rem;
+  }
+
+  .chibi-paw-progress svg {
+    width: 7px;
+    height: 7px;
+  }
+
+  .chibi-action {
+    min-height: 68px;
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 7px;
+    padding-inline: 9px;
+  }
+
+  .chibi-action-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .chibi-action strong {
+    font-size: 0.82rem;
+  }
+
+  .chibi-shortcut-rail {
+    padding-inline: 4px;
+  }
+}
+
 .pending-card,
 .candidate-card,
 .notification-sync-card,

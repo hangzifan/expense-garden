@@ -25,20 +25,21 @@
   --brand-personal: var(--primary);
   --brand-companion: var(--accent);
 
-  /* Neko Ledger — home-only editorial companion palette. */
-  --cat-canvas: #fff9fc;
-  --cat-surface: #fffdfd;
-  --cat-surface-soft: #f7eff8;
-  --cat-plum: #4d385d;
-  --cat-lilac: #8b6aa5;
-  --cat-lilac-strong: #72528e;
+  /* Neko Ledger — home-only Q-style companion palette. */
+  --cat-canvas: #fffbff;
+  --cat-surface: #ffffff;
+  --cat-surface-soft: #f7f0ff;
+  --cat-plum: #4a356d;
+  --cat-lilac: #9975c6;
+  --cat-lilac-strong: #7650a6;
   --cat-on-primary: #ffffff;
-  --cat-rose: #d98aa1;
-  --cat-mint: #4f7f72;
-  --cat-ink: #2f2735;
-  --cat-muted: #756b7b;
-  --cat-border: #eadfec;
-  --cat-shadow: 0 18px 42px rgba(78, 52, 91, 0.14);
+  --cat-rose: #e96f94;
+  --cat-mint: #3f887b;
+  --cat-gold: #b47716;
+  --cat-ink: #382b50;
+  --cat-muted: #756981;
+  --cat-border: #e3d5f0;
+  --cat-shadow: 0 20px 48px rgba(91, 61, 126, 0.14);
 
   /* Surfaces */
   --color-canvas: #f4f6f2;
@@ -202,6 +203,7 @@ body[data-theme="dark"] {
   --cat-on-primary: #24172b;
   --cat-rose: #e6a3b7;
   --cat-mint: #8fc2b4;
+  --cat-gold: #e5bd6b;
   --cat-ink: #f7eff9;
   --cat-muted: #bcaec2;
   --cat-border: #403249;

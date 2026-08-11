@@ -6,7 +6,7 @@ import { parseExpenseText } from "./parser.js";
 import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
 import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
 import { createId } from "./ids.js";
-import { PawPrint, Sparkles } from "lucide-react";
+import { PawPrint } from "lucide-react";
 import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
 import { AppHeader, Screen } from "./ui.jsx";
 import { useDebouncedLedgerSave, useNativeLedgerBackup } from "./hooks/useLedgerPersistence.js";
@@ -14,6 +14,13 @@ import { useNotificationSync } from "./hooks/useNotificationSync.js";
 import { useDialogFocus } from "./hooks/useDialogFocus.js";
 import { ExpenseCategoriesContext, IncomeCategoriesContext } from "./categoryContext.js";
 import { CategoryGrid, Field, SegmentedControl, TypeToggle } from "./components/FormControls.jsx";
+import {
+  NekoEmptyState,
+  NekoHomeHero,
+  NekoQuickActions,
+  NekoSectionHeading,
+  NekoShortcutRail
+} from "./components/NekoHomeWidgets.jsx";
 import { AddScreen } from "./screens/AddScreen.jsx";
 import {
   fallbackCategories,
@@ -384,80 +391,59 @@ function HomeScreen({
     : stats.balance < 0
       ? "猫娘发现本月支出高于收入，去看看明细"
       : "猫娘已把今天的账目整理好";
+  const heroSummary = {
+    periodLabel: formatMonthLabel(selectedMonth),
+    totalLabel: isCurrentMonth ? "本月支出" : "所选月支出",
+    formattedTotal,
+    amountLengthClass,
+    dailyLabel: isCurrentMonth ? "今日" : "日均",
+    dailyValue: money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage),
+    budget: money(stats.budget),
+    usedRate: stats.usedRate,
+    income: money(stats.incomeTotal),
+    balance: money(stats.balance),
+    balanceNegative: stats.balance < 0
+  };
 
   return (
-    <Screen className="home-screen neko-home">
-      <section className="home-hero">
-        <header className="topbar neko-topbar">
-          <div>
-            <p className="date-line">{formatReadableDate(today())}</p>
-            <div className="neko-title-line">
-              <h1>小账本</h1>
-              <span className="neko-mark" aria-hidden="true"><PawPrint /></span>
-            </div>
-            <p className="neko-companion-line">{companionLine}</p>
+    <Screen className="home-screen chibi-home">
+      <header className="topbar chibi-topbar">
+        <div>
+          <p className="date-line">{formatReadableDate(today())}</p>
+          <div className="chibi-title-line">
+            <h1>小账本</h1>
+            <span className="chibi-brand-paw" aria-hidden="true"><PawPrint /></span>
           </div>
-          <button className="icon-button" type="button" aria-label="自定义封面" onClick={() => onTab("profile")}>
-            <UserIcon />
-          </button>
-        </header>
-
-        <div className="cover-panel neko-cover-panel" role="region" aria-label="月度概览">
-          <div className="cover-image-area" style={coverStyle}>
-            <div className="neko-hero-copy">
-              <span className="neko-kicker"><Sparkles aria-hidden="true" />猫娘小金库</span>
-              <span className="neko-metric-label">{isCurrentMonth ? "本月支出" : "所选月支出"}</span>
-              <strong className={amountLengthClass}>{formattedTotal}</strong>
-              <span className="neko-daily-total">
-                {isCurrentMonth ? "今日" : "日均"} {money(isCurrentMonth ? stats.todayTotal : stats.dailyAverage)}
-              </span>
-            </div>
-          </div>
-          <div className="cover-data-area">
-            <div className="budget-block">
-              <div className="budget-row">
-                <span>预算进度 · {money(stats.budget)}</span>
-                <strong>{Math.round(stats.usedRate)}%</strong>
-              </div>
-              <div
-                className="progress-track"
-                role="progressbar"
-                aria-label="本月预算使用比例"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={Math.min(Math.round(stats.usedRate), 100)}
-              >
-                <div className="progress-fill" style={{ width: `${Math.min(stats.usedRate, 100)}%` }} />
-              </div>
-              <div className="balance-row">
-                <span><small>收入</small><b>{money(stats.incomeTotal)}</b></span>
-                <span className={stats.balance < 0 ? "negative" : "positive"}>
-                  <small>结余</small><b>{money(stats.balance)}</b>
-                </span>
-              </div>
-            </div>
+          <div className="chibi-companion-line" role="status">
+            <span className="chibi-companion-avatar" aria-hidden="true">
+              <img src="/assets/neko-bookkeeper-chibi-v1.png" alt="" draggable="false" />
+            </span>
+            <p>{companionLine}</p>
           </div>
         </div>
-        <div className="scroll-cue" aria-hidden="true" />
-      </section>
+        <button className="icon-button chibi-profile-button" type="button" aria-label="自定义封面" onClick={() => onTab("profile")}>
+          <UserIcon />
+          {pending.length > 0 && <span aria-hidden="true" />}
+        </button>
+      </header>
 
-      <section className="home-below-fold">
-        <div className="quick-grid">
-          <ActionButton variant="primary" icon={PlusIcon} label="记一笔" onClick={() => onTab("add")} />
-          <ActionButton variant="secondary" icon={UploadIcon} label="识别账单" onClick={() => onTab("scan")} />
-        </div>
+      <NekoHomeHero summary={heroSummary} coverStyle={coverStyle} />
+
+      <section className="chibi-home-content">
+        <NekoQuickActions onAdd={() => onTab("add")} onScan={() => onTab("scan")} />
+        <NekoShortcutRail onTab={onTab} />
 
         <MonthPicker value={selectedMonth} max={currentMonth} onChange={onMonthChange} />
 
-        <SectionTitle title="待确认" aside={`${pending.length} 条`} headingLevel={2} />
+        <NekoSectionHeading type="pending" title="待确认" aside={`${pending.length} 条`} />
         <div className="stack">
-          {pending.length === 0 && <EmptyLine text="没有待确认账单" />}
+          {pending.length === 0 && <NekoEmptyState />}
           {pending.map((item) => (
             <PendingCard key={item.id} item={item} onConfirm={onConfirm} onDelete={onDeletePending} />
           ))}
         </div>
 
-        <SectionTitle title="最近记录" aside={formatMonthLabel(selectedMonth)} headingLevel={2} />
+        <NekoSectionHeading type="recent" title="最近记录" aside={formatMonthLabel(selectedMonth)} />
         <ExpenseList items={latest} onEdit={onEdit} onDelete={onDelete} />
       </section>
     </Screen>
@@ -2649,15 +2635,6 @@ function SectionTitle({ title, aside, headingLevel = 3 }) {
       <Heading>{title}</Heading>
       <span>{aside}</span>
     </div>
-  );
-}
-
-function ActionButton({ icon: Icon, label, onClick, variant = "secondary" }) {
-  return (
-    <button type="button" className={`action-button ${variant}`} onClick={onClick}>
-      <Icon />
-      <span>{label}</span>
-    </button>
   );
 }
 
