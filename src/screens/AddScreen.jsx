@@ -3,6 +3,7 @@ import { methods } from "../data.js";
 import { fallbackCategories } from "../domain/categories.js";
 import { ExpenseCategoriesContext, IncomeCategoriesContext } from "../categoryContext.js";
 import { CategoryGrid, Field, SegmentedControl, TypeToggle } from "../components/FormControls.jsx";
+import { NekoAmountAssistant, NekoPageMuse } from "../components/NekoPageAccents.jsx";
 import { CheckIcon } from "../icons.jsx";
 import { AppHeader, Screen } from "../ui.jsx";
 
@@ -16,6 +17,8 @@ export function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
         eyebrow={editingId ? "编辑记录" : "每日收支"}
         title={editingId ? "调整这一笔" : "记一笔"}
       />
+
+      <NekoPageMuse variant="add" />
 
       <form className="form" onSubmit={(event) => {
         event.preventDefault();
@@ -36,6 +39,7 @@ export function AddScreen({ draft, setDraft, editingId, onSave, onCancel }) {
 
         <label className="amount-input">
           <span>金额</span>
+          <NekoAmountAssistant />
           <input
             value={draft.amount}
             onChange={(event) => setDraft({ ...draft, amount: event.target.value })}

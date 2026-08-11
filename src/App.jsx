@@ -6,7 +6,7 @@ import { parseExpenseText } from "./parser.js";
 import { buildNativeMerchantProfiles, refineWithMerchantMemory } from "./merchantMemory.js";
 import { buildIncomeSummary, compareIncome } from "./incomeSummary.js";
 import { createId } from "./ids.js";
-import { PawPrint } from "lucide-react";
+import { PawPrint, Search } from "lucide-react";
 import { CategoryIcon, categoryIconGroups, searchCategoryIcons } from "./categoryIcons.jsx";
 import { AppHeader, Screen } from "./ui.jsx";
 import { useDebouncedLedgerSave, useNativeLedgerBackup } from "./hooks/useLedgerPersistence.js";
@@ -21,6 +21,7 @@ import {
   NekoSectionHeading,
   NekoShortcutRail
 } from "./components/NekoHomeWidgets.jsx";
+import { NekoPageMuse, NekoReportArtwork, NekoThemeAssistant } from "./components/NekoPageAccents.jsx";
 import { AddScreen } from "./screens/AddScreen.jsx";
 import {
   fallbackCategories,
@@ -966,6 +967,8 @@ function ScanScreen({ hidden = false, merchantHistory = [], onPending, onPending
     <Screen className="scan-screen" hidden={hidden}>
       <AppHeader eyebrow="导入截图" title="识别后确认" />
 
+      <NekoPageMuse variant="scan" />
+
       <div className="import-panel">
         <button className="primary-button full" type="button" onClick={pickImageWithNativeOcr}>
           <ScanIcon />
@@ -1567,6 +1570,7 @@ function ReportScreen({ stats, expenses, allExpenses, budget, selectedMonth, cur
       />
 
       <section className="report-overview">
+        <NekoReportArtwork />
         <div className="report-primary-metric">
           <span>本月支出</span>
           <strong>{money(stats.total)}</strong>
@@ -2022,7 +2026,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
 
   return (
     <>
-      <Screen>
+      <Screen className="profile-screen">
         <AppHeader eyebrow="自定义封面" title="我的账本" />
 
         <section className="settings-panel cover-picker">
@@ -2057,6 +2061,7 @@ function ProfileScreen({ settings, setSettings, setExpenses, setPending }) {
         </div>
 
         <SectionTitle title="主题色" aside="偏好" />
+        <NekoThemeAssistant />
         <div className="theme-row">
           {themes.map((theme) => (
             <button
@@ -2670,6 +2675,7 @@ function CompactMonthPicker({ value, max, onChange }) {
 
 function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) {
   const visibleLength = Math.max(days.length, previousDays.length, 1);
+  const selectedIndex = Math.max(days.findIndex((day) => day.date === selectedDay), 0);
   const max = Math.max(...days.map((day) => day.total), ...previousDays.map((day) => day.total), 1);
   const buildPoints = (source) => source
     .map((day, index) => {
@@ -2681,8 +2687,34 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
   const points = buildPoints(days);
   const previousPoints = buildPoints(previousDays);
 
+  const selectDayAt = (index) => {
+    const nextIndex = clamp(index, 0, Math.max(days.length - 1, 0));
+    onDaySelect?.(days[nextIndex]?.date);
+  };
+
   return (
-    <svg className="trend-chart" viewBox="0 0 280 128" role="group" aria-label="本月与上月消费趋势，使用左右方向键选择日期">
+    <svg
+      className="trend-chart"
+      viewBox="0 0 280 128"
+      role="slider"
+      tabIndex="0"
+      aria-label="本月与上月消费趋势日期"
+      aria-valuemin="1"
+      aria-valuemax={Math.max(days.length, 1)}
+      aria-valuenow={selectedIndex + 1}
+      aria-valuetext={`${formatDailyLabel(days[selectedIndex]?.date || selectedDay)}，支出 ${money(days[selectedIndex]?.total || 0)}`}
+      onClick={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const position = clamp((event.clientX - bounds.left) / Math.max(bounds.width, 1), 0, 1);
+        selectDayAt(Math.round(position * Math.max(days.length - 1, 0)));
+      }}
+      onKeyDown={(event) => {
+        const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        if (!direction && event.key !== "Home" && event.key !== "End") return;
+        event.preventDefault();
+        selectDayAt(event.key === "Home" ? 0 : event.key === "End" ? days.length - 1 : selectedIndex + direction);
+      }}
+    >
       <path d="M14 106H266" />
       <path d="M14 28H266" className="grid-line" />
       {previousPoints && <polyline points={previousPoints} className="previous-line" />}
@@ -2696,29 +2728,7 @@ function TrendChart({ days, previousDays = [], selectedDay = "", onDaySelect }) 
           <g
             className={selected ? "trend-day selected" : "trend-day"}
             key={day.date}
-            role="button"
-            tabIndex={selected ? 0 : -1}
-            aria-label={`${formatDailyLabel(day.date)}，支出 ${money(day.total)}`}
-            aria-pressed={selected}
-            onClick={() => onDaySelect?.(day.date)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onDaySelect?.(day.date);
-                return;
-              }
-              const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-              if (!direction && event.key !== "Home" && event.key !== "End") return;
-              event.preventDefault();
-              const nextIndex = event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? days.length - 1
-                  : clamp(index + direction, 0, days.length - 1);
-              onDaySelect?.(days[nextIndex]?.date);
-              const controls = event.currentTarget.parentElement?.querySelectorAll(".trend-day");
-              window.requestAnimationFrame(() => controls?.[nextIndex]?.focus());
-            }}
+            aria-hidden="true"
           >
             <circle className="trend-hit-area" cx={x} cy={y} r="8" />
             {showPoint && <circle className="trend-point" cx={x} cy={y} r={selected ? "4" : "2.8"} />}
