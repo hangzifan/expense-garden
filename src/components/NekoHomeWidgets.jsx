@@ -80,13 +80,33 @@ export function NekoQuickActions({ onAdd, onScan }) {
   return (
     <div className="chibi-action-grid">
       <button className="chibi-action primary" type="button" onClick={onAdd}>
-        <span className="chibi-action-icon" aria-hidden="true"><Plus /></span>
-        <span><strong>记一笔</strong><small>支出与收入</small></span>
+        <span className="chibi-action-copy">
+          <span className="chibi-action-kicker"><Plus aria-hidden="true" />执笔形态</span>
+          <strong>记一笔</strong>
+          <small>支出与收入</small>
+        </span>
+        <img
+          className="chibi-action-character"
+          src="/assets/neko-u-entry-clerk-v1.webp"
+          alt=""
+          draggable="false"
+          aria-hidden="true"
+        />
         <PawPrint className="chibi-action-paw" aria-hidden="true" />
       </button>
       <button className="chibi-action scan" type="button" onClick={onScan}>
-        <span className="chibi-action-icon" aria-hidden="true"><ScanLine /></span>
-        <span><strong>识别账单</strong><small>截图与通知</small></span>
+        <span className="chibi-action-copy">
+          <span className="chibi-action-kicker"><ScanLine aria-hidden="true" />侦探形态</span>
+          <strong>识别账单</strong>
+          <small>截图与通知</small>
+        </span>
+        <img
+          className="chibi-action-character"
+          src="/assets/neko-u-scan-detective-v1.webp"
+          alt=""
+          draggable="false"
+          aria-hidden="true"
+        />
         <ReceiptText className="chibi-action-paw" aria-hidden="true" />
       </button>
     </div>
@@ -128,7 +148,7 @@ export function NekoEmptyState() {
   return (
     <div className="chibi-empty-state">
       <span className="chibi-empty-cat" aria-hidden="true">
-        <img src="/assets/neko-bookkeeper-chibi-v1.png" alt="" draggable="false" />
+        <img src="/assets/neko-u-empty-rest-v1.webp" alt="" draggable="false" />
       </span>
       <div>
         <strong>账目都整理好啦</strong>

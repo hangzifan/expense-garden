@@ -1,0 +1,38 @@
+# Dependencies and frontend output
+node_modules/
+dist/
+
+# Local release history and recovery archives
+backups/
+release/
+rollback/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+android/local.properties
+
+# Android/Gradle output
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime logs and test artifacts
+*.log
+coverage/
+playwright-report/
+test-results/

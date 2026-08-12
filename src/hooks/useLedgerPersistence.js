@@ -58,9 +58,6 @@ export function useDebouncedLedgerSave(state, { enabled = true, delay = LOCAL_SA
     };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", flushWhenHidden);
-    if (ready && shouldFlushNativeBackup("visibilitychange", document)) {
-      void flushNativeBackup();
-    }
     return () => {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", flushWhenHidden);
@@ -145,6 +142,9 @@ export function useNativeLedgerBackup({
 
     window.addEventListener("pagehide", flushOnPageHide);
     document.addEventListener("visibilitychange", flushWhenHidden);
+    if (ready && shouldFlushNativeBackup("visibilitychange", document)) {
+      void flushNativeBackup();
+    }
     return () => {
       window.removeEventListener("pagehide", flushOnPageHide);
       document.removeEventListener("visibilitychange", flushWhenHidden);

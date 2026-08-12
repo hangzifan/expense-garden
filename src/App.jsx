@@ -405,6 +405,12 @@ function HomeScreen({
     balance: money(stats.balance),
     balanceNegative: stats.balance < 0
   };
+  const companionArt = pending.length
+    ? "/assets/neko-u-scan-detective-v1.webp"
+    : stats.balance < 0
+      ? "/assets/neko-u-report-analyst-v1.webp"
+      : "/assets/neko-u-success-v1.webp";
+  const companionMode = pending.length ? "扫描侦探" : stats.balance < 0 ? "数据分析" : "确认庆祝";
 
   return (
     <Screen className="home-screen chibi-home">
@@ -417,9 +423,9 @@ function HomeScreen({
           </div>
           <div className="chibi-companion-line" role="status">
             <span className="chibi-companion-avatar" aria-hidden="true">
-              <img src="/assets/neko-bookkeeper-chibi-v1.png" alt="" draggable="false" />
+              <img src={companionArt} alt="" draggable="false" />
             </span>
-            <p>{companionLine}</p>
+            <p>{companionMode} · {companionLine}</p>
           </div>
         </div>
         <button className="icon-button chibi-profile-button" type="button" aria-label="自定义封面" onClick={() => onTab("profile")}>
