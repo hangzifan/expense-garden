@@ -68,6 +68,15 @@ npx cap sync android
 - 应用不读取支付账号密码，不主动向第三方上传账单。
 - 用户可在正式入账前编辑或删除识别结果。
 
+## 版本历史与可复现性
+
+仓库按实际开发时间整理了 v1.0 至 v1.35 的提交与标签。完整时间线、每个版本的来源状态、历史 APK 的 SHA-256 校验值及重建范围，见 [历史版本说明](history/README.md) 和 [版本清单](history/version-manifest.json)。
+
+- `v1.29.0` 是已核对的 Web 源码版本；`v1.35.0-preview` 对应当前预览源码。
+- `archive/*-reconstructed` 标签表示依据保留记录重建的历史状态，不宣称与当时 APK 逐字节一致。
+- v1.22–v1.26 仅保留从 APK 恢复的编译后 Web 资源，明确标记为 `build-only`。
+- 历史 APK 总体积超过 1 GB 且使用调试签名，因此不直接提交到 Git；仓库保留其文件信息与摘要用于核验。
+
 ## 开源说明
 
 代码与项目内原创视觉素材采用 [MIT License](LICENSE)。欢迎提交 Issue 与 Pull Request。请勿在 Issue 中上传包含真实交易信息、支付通知或个人隐私的截图。
