@@ -4,6 +4,19 @@
 
 > 当前开源版本：v1.35。数据默认保存在用户设备本地；应用不要求微信或支付宝账号密码，也不会绑定支付账户。
 
+## APK 下载
+
+最近四个测试安装包已通过 [GitHub Releases](https://github.com/hangzifan/expense-garden/releases) 发布：
+
+| 版本 | 主题 | Android 版本号 | 下载 |
+|---|---|---:|---|
+| v1.34 | 全量猫娘 UI 预览 | 37 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.34.0-reconstructed) |
+| v1.33 | 混合猫娘 UI 预览 | 36 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.33.0-reconstructed) |
+| v1.32 | 猫娘首页预览 | 35 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.32.0-reconstructed) |
+| v1.31 | 企业级 UI 预览 | 34 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.31.0-reconstructed) |
+
+以上 APK 均为 **Debug Pre-release**，使用相同包名与调试签名，仅供测试和历史验证。安装前建议先导出备份；从高 versionCode 回退到低版本时不能直接覆盖安装。每个 Release 页面均提供 APK SHA-256、签名证书指纹和对应源码状态说明。
+
 ## 功能
 
 - 首页：本月支出、收入、结余、预算进度、待确认账单和最近记录。
