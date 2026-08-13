@@ -6,10 +6,11 @@
 
 ## APK 下载
 
-最近四个测试安装包已通过 [GitHub Releases](https://github.com/hangzifan/expense-garden/releases) 发布：
+最近五个测试安装包已通过 [GitHub Releases](https://github.com/hangzifan/expense-garden/releases) 发布：
 
 | 版本 | 主题 | Android 版本号 | 下载 |
 |---|---|---:|---|
+| v1.35 | 猫娘 UI 完整预览 | 38 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/v1.35.0-preview) |
 | v1.34 | 全量猫娘 UI 预览 | 37 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.34.0-reconstructed) |
 | v1.33 | 混合猫娘 UI 预览 | 36 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.33.0-reconstructed) |
 | v1.32 | 猫娘首页预览 | 35 | [Release 与 APK](https://github.com/hangzifan/expense-garden/releases/tag/archive%2Fv1.32.0-reconstructed) |
